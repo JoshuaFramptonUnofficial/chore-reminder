@@ -8,10 +8,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
@@ -158,5 +160,57 @@ fun LiquidPillButton(
         horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.CenterHorizontally),
         verticalAlignment = Alignment.CenterVertically,
         content = content,
+    )
+}
+
+/**
+ * A round icon button with the same Liquid Glass refraction as [LiquidPillButton],
+ * sized for toolbar actions (the Home screen's Settings icon over the glass app bar).
+ *
+ * [backdrop] must come from [com.kyant.backdrop.backdrops.rememberLayerBackdrop] and
+ * the same instance must be attached via `.layerBackdrop(backdrop)` to whatever
+ * content should show *through* the button -- the scrolling chore list.
+ */
+@Composable
+fun LiquidIconButton(
+    onClick: () -> Unit,
+    backdrop: Backdrop,
+    modifier: Modifier = Modifier,
+    tint: Color = MaterialTheme.colorScheme.primary,
+    diameter: Dp = 44.dp,
+    content: @Composable () -> Unit,
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.88f else 1f,
+        animationSpec = spring(dampingRatio = 0.45f, stiffness = 320f),
+        label = "liquid-icon-scale",
+    )
+
+    Box(
+        modifier
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .size(diameter)
+            .drawBackdrop(
+                backdrop = backdrop,
+                shape = { Capsule() },
+                effects = {
+                    vibrancy()
+                    blur(2.dp.toPx())
+                    lens(8.dp.toPx(), 16.dp.toPx())
+                },
+                onDrawSurface = {
+                    drawRect(tint.copy(alpha = 0.22f))
+                },
+            )
+            .clickable(
+                interactionSource = interactionSource,
+                indication = null,
+                role = Role.Button,
+                onClick = onClick,
+            ),
+        contentAlignment = Alignment.Center,
+        content = { content() },
     )
 }

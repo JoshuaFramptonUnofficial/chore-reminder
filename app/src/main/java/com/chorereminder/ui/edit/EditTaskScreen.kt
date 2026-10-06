@@ -19,6 +19,8 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
@@ -30,6 +32,8 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -37,6 +41,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -44,7 +49,17 @@ import com.chorereminder.data.RecurrenceKind
 import com.chorereminder.domain.IntervalUnit
 import com.chorereminder.ui.TaskIconBadge
 import com.chorereminder.ui.formatDate
+import com.chorereminder.ui.theme.LiquidPillButton
+import com.chorereminder.ui.theme.glassPanel
+import com.chorereminder.ui.theme.glassSource
+import com.chorereminder.ui.theme.glassTint
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import dev.chrisbanes.haze.rememberHazeState
 import java.time.DayOfWeek
+import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneOffset
 import java.time.format.TextStyle
 import java.util.Locale
 
@@ -58,9 +73,12 @@ fun EditTaskScreen(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val categories by viewModel.categories.collectAsStateWithLifecycle()
     var confirmDelete by remember { mutableStateOf(false) }
+    val hazeState = rememberHazeState()
+    val pillBackdrop = rememberLayerBackdrop()
 
     Scaffold(
         topBar = {
+            // Glass app bar to match Home/Complete: the form scrolls underneath.
             TopAppBar(
                 title = { Text(if (state.isEditing) "Edit chore" else "New chore") },
                 navigationIcon = {
@@ -79,7 +97,25 @@ fun EditTaskScreen(
                         }
                     }
                 },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
+                ),
+                modifier = Modifier.glassPanel(hazeState, glassTint),
             )
+        },
+        floatingActionButton = {
+            if (state.canSave) {
+                LiquidPillButton(
+                    onClick = { viewModel.save(onDone) },
+                    backdrop = pillBackdrop,
+                ) {
+                    Text(
+                        if (state.isEditing) "Save changes" else "Add chore",
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+            }
         },
     ) { padding ->
         Column(
@@ -87,6 +123,8 @@ fun EditTaskScreen(
                 .fillMaxSize()
                 .padding(padding)
                 .verticalScroll(rememberScrollState())
+                .glassSource(hazeState)
+                .layerBackdrop(pillBackdrop)
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
@@ -160,6 +198,10 @@ fun EditTaskScreen(
                     state.kind, RecurrenceKind.FIXED_WEEKDAY,
                     "Weekday", viewModel::setKind,
                 )
+                RecurrenceKindChip(
+                    state.kind, RecurrenceKind.ONE_OFF,
+                    "Doesn't repeat", viewModel::setKind,
+                )
             }
 
             Text(
@@ -170,67 +212,80 @@ fun EditTaskScreen(
                         "Stays on its calendar schedule no matter when you finish it."
                     RecurrenceKind.FIXED_WEEKDAY ->
                         "Falls due on the same weekday every week."
+                    RecurrenceKind.ONE_OFF ->
+                        "A single task -- marking it done removes it for good."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
-            if (state.kind == RecurrenceKind.FIXED_WEEKDAY) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    DayOfWeek.entries.forEach { day ->
-                        FilterChip(
-                            selected = state.dayOfWeek == day,
-                            onClick = { viewModel.setDayOfWeek(day) },
-                            label = {
-                                Text(day.getDisplayName(TextStyle.SHORT, Locale.getDefault()))
-                            },
-                        )
-                    }
-                }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(
-                        value = state.intervalText,
-                        onValueChange = viewModel::setIntervalText,
-                        label = { Text("Every") },
-                        singleLine = true,
-                        isError = state.interval == null,
-                        modifier = Modifier.width(110.dp),
-                    )
-                    Spacer(Modifier.width(8.dp))
+            when (state.kind) {
+                RecurrenceKind.FIXED_WEEKDAY -> {
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        IntervalUnit.entries.forEach { unit ->
+                        DayOfWeek.entries.forEach { day ->
                             FilterChip(
-                                selected = state.unit == unit,
-                                onClick = { viewModel.setUnit(unit) },
-                                label = { Text(unit.name.lowercase()) },
+                                selected = state.dayOfWeek == day,
+                                onClick = { viewModel.setDayOfWeek(day) },
+                                label = {
+                                    Text(day.getDisplayName(TextStyle.SHORT, Locale.getDefault()))
+                                },
                             )
                         }
                     }
                 }
 
-                if (state.kind == RecurrenceKind.FIXED_INTERVAL) {
+                RecurrenceKind.ONE_OFF -> {
+                    DueDatePicker(
+                        label = "Due",
+                        date = state.anchor,
+                        onPick = viewModel::setAnchor,
+                    )
+                }
+
+                else -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Starting ${formatDate(state.anchor)}",
-                            style = MaterialTheme.typography.bodyMedium,
+                        OutlinedTextField(
+                            value = state.intervalText,
+                            onValueChange = viewModel::setIntervalText,
+                            label = { Text("Every") },
+                            singleLine = true,
+                            isError = state.interval == null,
+                            modifier = Modifier.width(110.dp),
                         )
                         Spacer(Modifier.width(8.dp))
-                        AssistChip(
-                            onClick = { viewModel.setAnchor(java.time.LocalDate.now()) },
-                            label = { Text("Today") },
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            IntervalUnit.entries.forEach { unit ->
+                                FilterChip(
+                                    selected = state.unit == unit,
+                                    onClick = { viewModel.setUnit(unit) },
+                                    label = { Text(unit.name.lowercase()) },
+                                )
+                            }
+                        }
+                    }
+
+                    if (state.kind == RecurrenceKind.FIXED_INTERVAL) {
+                        DueDatePicker(
+                            label = "Starting",
+                            date = state.anchor,
+                            onPick = viewModel::setAnchor,
                         )
                     }
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-            Button(
-                onClick = { viewModel.save(onDone) },
-                enabled = state.canSave,
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (state.isEditing) "Save changes" else "Add chore") }
-            Spacer(Modifier.height(32.dp))
+            if (!state.canSave) {
+                Spacer(Modifier.height(16.dp))
+                // No valid recurrence/name yet -- a disabled flat button explains
+                // why there's nothing to tap, since the FAB only appears once the
+                // form is actually saveable.
+                Button(
+                    onClick = {},
+                    enabled = false,
+                    modifier = Modifier.fillMaxWidth(),
+                ) { Text(if (state.isEditing) "Save changes" else "Add chore") }
+            }
+            Spacer(Modifier.height(96.dp))
         }
     }
 
@@ -269,6 +324,54 @@ private fun RecurrenceKindChip(
         onClick = { onSelect(value) },
         label = { Text(label) },
     )
+}
+
+/**
+ * A date field paired with a Material3 date picker dialog. Replaces the old
+ * "Today"-only assist chip so a fixed schedule's anchor -- or a one-off task's due
+ * date -- can be set to any day, not just today.
+ */
+@Composable
+private fun DueDatePicker(
+    label: String,
+    date: LocalDate,
+    onPick: (LocalDate) -> Unit,
+) {
+    var showPicker by remember { mutableStateOf(false) }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "$label ${formatDate(date)}",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Spacer(Modifier.width(8.dp))
+        AssistChip(
+            onClick = { showPicker = true },
+            label = { Text("Change") },
+        )
+    }
+
+    if (showPicker) {
+        val state = rememberDatePickerState(
+            initialSelectedDateMillis = date.atStartOfDay(ZoneOffset.UTC).toInstant().toEpochMilli(),
+        )
+        DatePickerDialog(
+            onDismissRequest = { showPicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    state.selectedDateMillis?.let { millis ->
+                        onPick(Instant.ofEpochMilli(millis).atZone(ZoneOffset.UTC).toLocalDate())
+                    }
+                    showPicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("Cancel") }
+            },
+        ) {
+            DatePicker(state = state)
+        }
+    }
 }
 
 @Composable

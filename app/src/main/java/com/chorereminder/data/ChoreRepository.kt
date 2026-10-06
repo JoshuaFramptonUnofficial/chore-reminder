@@ -91,7 +91,9 @@ class ChoreRepository(private val dao: ChoreDao) {
 
     /**
      * FR-11: append a timestamped completion. Returns the task's recomputed next-due
-     * date so the caller can reschedule, or null if the task vanished underneath us.
+     * date so the caller can reschedule, or null if the task vanished underneath us
+     * (deleted concurrently, or just now -- a one-off task has no next occurrence,
+     * so completing it finishes the task for good).
      */
     suspend fun completeTask(taskId: Long, at: Instant = Instant.now()): LocalDate? {
         val details = dao.getTaskWithDetails(taskId) ?: return null
@@ -100,6 +102,10 @@ class ChoreRepository(private val dao: ChoreDao) {
             CompletionEntity(taskId = taskId, completedAt = at, completedOn = completedOn),
         )
         val task = details.task
+        if (task.recurrence.kind == RecurrenceKind.ONE_OFF) {
+            dao.deleteTask(taskId)
+            return null
+        }
         return nextDueDate(
             recurrence = task.recurrence.toDomain(task.createdDate),
             createdDate = task.createdDate,

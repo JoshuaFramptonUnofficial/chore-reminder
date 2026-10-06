@@ -44,7 +44,7 @@ data class EditTaskState(
     /** FR-1: a task needs a name and a valid recurrence rule to be saveable. */
     val canSave: Boolean
         get() = name.isNotBlank() &&
-            (kind == RecurrenceKind.FIXED_WEEKDAY || interval != null)
+            (kind == RecurrenceKind.FIXED_WEEKDAY || kind == RecurrenceKind.ONE_OFF || interval != null)
 }
 
 class EditTaskViewModel(
@@ -131,6 +131,10 @@ class EditTaskViewModel(
             RecurrenceKind.FIXED_WEEKDAY -> RecurrenceSpec(
                 kind = RecurrenceKind.FIXED_WEEKDAY,
                 dayOfWeek = s.dayOfWeek,
+            )
+            RecurrenceKind.ONE_OFF -> RecurrenceSpec(
+                kind = RecurrenceKind.ONE_OFF,
+                anchor = s.anchor,
             )
         }
 

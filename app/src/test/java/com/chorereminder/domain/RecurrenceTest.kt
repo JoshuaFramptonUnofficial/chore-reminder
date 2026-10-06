@@ -245,6 +245,23 @@ class RecurrenceTest {
         )
     }
 
+    // --- One-off ----------------------------------------------------------------
+
+    @Test
+    fun oneOff_dueDateNeverMoves_regardlessOfCompletion() {
+        val rule = Recurrence.OneOff(date("2026-10-20"))
+        assertEquals(
+            date("2026-10-20"),
+            nextDueDate(rule, createdDate = date("2026-10-01"), lastCompletion = null),
+        )
+        // Even a (hypothetical) completion doesn't shift a one-off's due date -- the
+        // caller is responsible for retiring the task once it's done.
+        assertEquals(
+            date("2026-10-20"),
+            nextDueDate(rule, createdDate = date("2026-10-01"), lastCompletion = date("2026-10-18")),
+        )
+    }
+
     // --- Matrix row: Overdue task ---------------------------------------------
     // nextDue Oct 1, today Oct 5 -> DueState.Overdue
 

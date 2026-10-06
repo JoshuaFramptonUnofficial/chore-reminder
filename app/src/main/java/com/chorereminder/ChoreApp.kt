@@ -67,10 +67,18 @@ class AppContainer(private val context: Context) {
     /**
      * FR-11/FR-14: identical effect whether triggered from the list, the
      * confirmation screen, or the notification action.
+     *
+     * A one-off task has no next due date -- it's deleted on completion, so there is
+     * nothing left to reschedule. Its notification and pending reminder work are
+     * cancelled the same as any other finished task.
      */
     suspend fun completeTask(taskId: Long) {
-        repository.completeTask(taskId) ?: return
+        val nextDue = repository.completeTask(taskId)
         Notifications.cancel(context, taskId)
+        if (nextDue == null) {
+            ReminderScheduler.cancel(context, taskId)
+            return
+        }
         repository.getTask(taskId)?.let { ReminderScheduler.schedule(context, it) }
     }
 

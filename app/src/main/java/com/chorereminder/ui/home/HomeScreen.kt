@@ -1,9 +1,11 @@
 package com.chorereminder.ui.home
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,36 +26,48 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chorereminder.data.CategoryGroup
 import com.chorereminder.data.TaskView
 import com.chorereminder.domain.DueState
+import com.chorereminder.domain.nextDueDate
 import com.chorereminder.ui.TaskIconBadge
 import com.chorereminder.ui.formatDueLabel
+import com.chorereminder.ui.formatEarlyCompletionMessage
 import com.chorereminder.ui.formatRecurrence
+import com.chorereminder.ui.theme.LiquidIconButton
 import com.chorereminder.ui.theme.LiquidPillButton
+import com.chorereminder.ui.theme.bouncyClickable
 import com.chorereminder.ui.theme.glassCard
+import com.chorereminder.ui.theme.glassCardTint
 import com.chorereminder.ui.theme.glassPanel
 import com.chorereminder.ui.theme.glassSource
 import com.chorereminder.ui.theme.glassTint
+import com.chorereminder.ui.theme.rememberPressScale
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.chrisbanes.haze.rememberHazeState
@@ -75,6 +89,7 @@ fun HomeScreen(
     val hazeState = rememberHazeState()
     val pillBackdrop = rememberLayerBackdrop()
     val today = LocalDate.now()
+    var pendingEarlyComplete by remember { mutableStateOf<TaskView?>(null) }
 
     Scaffold(
         topBar = {
@@ -82,9 +97,10 @@ fun HomeScreen(
             TopAppBar(
                 title = { Text("Chores", fontWeight = FontWeight.SemiBold) },
                 actions = {
-                    IconButton(onClick = onOpenSettings) {
+                    LiquidIconButton(onClick = onOpenSettings, backdrop = pillBackdrop) {
                         Icon(Icons.Filled.Settings, contentDescription = "Settings")
                     }
+                    Spacer(Modifier.width(4.dp))
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
@@ -130,7 +146,16 @@ fun HomeScreen(
                         task = task,
                         today = today,
                         onClick = { onOpenTask(task.task.id) },
-                        onComplete = { viewModel.complete(task.task.id) },
+                        onComplete = {
+                            // Completing something not yet due is surprising enough
+                            // to double-check -- especially since it reschedules the
+                            // whole recurrence from today.
+                            if (task.dueState == DueState.UPCOMING) {
+                                pendingEarlyComplete = task
+                            } else {
+                                viewModel.complete(task.task.id)
+                            }
+                        },
                         // Completing a task re-sorts the list; animate the move
                         // instead of letting rows jump.
                         modifier = Modifier.animateItem(),
@@ -142,6 +167,58 @@ fun HomeScreen(
             }
         }
     }
+
+    pendingEarlyComplete?.let { task ->
+        EarlyCompletionDialog(
+            task = task,
+            today = today,
+            onConfirm = {
+                viewModel.complete(task.task.id)
+                pendingEarlyComplete = null
+            },
+            onDismiss = { pendingEarlyComplete = null },
+        )
+    }
+}
+
+/**
+ * Confirms completing a task before it's due. The message is computed from the
+ * same [nextDueDate] math the repository will use, so the number shown here is
+ * exactly what the task will reschedule to.
+ */
+@Composable
+private fun EarlyCompletionDialog(
+    task: TaskView,
+    today: LocalDate,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    val newNextDue = nextDueDate(
+        recurrence = task.task.recurrence.toDomain(task.task.createdDate),
+        createdDate = task.task.createdDate,
+        lastCompletion = today,
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Complete early?") },
+        text = {
+            Text(
+                formatEarlyCompletionMessage(
+                    taskName = task.task.name,
+                    kind = task.task.recurrence.kind,
+                    currentDue = task.nextDue,
+                    newNextDue = newNextDue,
+                ),
+            )
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text("Complete") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("Not yet") }
+        },
+        containerColor = glassCardTint,
+    )
 }
 
 @Composable
@@ -207,7 +284,7 @@ private fun TaskCard(
                     Modifier
                 }
             )
-            .clickable(onClick = onClick)
+            .bouncyClickable(pressedScale = 0.97f, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 12.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -248,8 +325,12 @@ private fun TaskCard(
             }
 
             Spacer(Modifier.width(8.dp))
+            val completeInteractionSource = remember { MutableInteractionSource() }
+            val completeScale by rememberPressScale(completeInteractionSource, pressedScale = 0.8f)
             FilledTonalIconButton(
                 onClick = onComplete,
+                interactionSource = completeInteractionSource,
+                modifier = Modifier.graphicsLayer { scaleX = completeScale; scaleY = completeScale },
                 colors = IconButtonDefaults.filledTonalIconButtonColors(
                     containerColor = MaterialTheme.colorScheme.secondaryContainer,
                     contentColor = MaterialTheme.colorScheme.onSecondaryContainer,

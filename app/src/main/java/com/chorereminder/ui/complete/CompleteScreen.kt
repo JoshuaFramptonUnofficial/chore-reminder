@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -18,6 +19,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -25,9 +29,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.chorereminder.domain.DueState
+import com.chorereminder.domain.nextDueDate
 import com.chorereminder.ui.TaskIconBadge
 import com.chorereminder.ui.formatDate
 import com.chorereminder.ui.formatDueLabel
+import com.chorereminder.ui.formatEarlyCompletionMessage
+import com.chorereminder.ui.theme.glassCardTint
 import com.chorereminder.ui.theme.glassPanel
 import com.chorereminder.ui.theme.glassSource
 import com.chorereminder.ui.theme.glassTint
@@ -79,6 +87,7 @@ fun CompleteScreen(
 
             is CompleteUiState.Ready -> {
                 val view = s.task
+                var confirmEarly by remember(view.task.id) { mutableStateOf(false) }
                 ConfirmCard(hazeState) {
                     TaskIconBadge(
                         iconType = view.task.iconType,
@@ -117,7 +126,13 @@ fun CompleteScreen(
                     Spacer(Modifier.height(12.dp))
 
                     Button(
-                        onClick = { viewModel.confirm(onFinished) },
+                        onClick = {
+                            if (view.dueState == DueState.UPCOMING) {
+                                confirmEarly = true
+                            } else {
+                                viewModel.confirm(onFinished)
+                            }
+                        },
                         enabled = !s.saving,
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                         colors = ButtonDefaults.buttonColors(
@@ -128,6 +143,38 @@ fun CompleteScreen(
                     }
                     TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                         Text("Not yet")
+                    }
+
+                    if (confirmEarly) {
+                        val newNextDue = nextDueDate(
+                            recurrence = view.task.recurrence.toDomain(view.task.createdDate),
+                            createdDate = view.task.createdDate,
+                            lastCompletion = today,
+                        )
+                        AlertDialog(
+                            onDismissRequest = { confirmEarly = false },
+                            title = { Text("Complete early?") },
+                            text = {
+                                Text(
+                                    formatEarlyCompletionMessage(
+                                        taskName = view.task.name,
+                                        kind = view.task.recurrence.kind,
+                                        currentDue = view.nextDue,
+                                        newNextDue = newNextDue,
+                                    ),
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    confirmEarly = false
+                                    viewModel.confirm(onFinished)
+                                }) { Text("Complete") }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { confirmEarly = false }) { Text("Not yet") }
+                            },
+                            containerColor = glassCardTint,
+                        )
                     }
                 }
             }

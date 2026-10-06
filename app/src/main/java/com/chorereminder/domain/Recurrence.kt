@@ -30,6 +30,9 @@ sealed interface Recurrence {
 
     /** Repeats on a specific weekday, e.g. "every Monday". */
     data class FixedWeekday(val dayOfWeek: DayOfWeek) : Recurrence
+
+    /** A single-occurrence task with no repeat. Due on [dueDate], done for good once completed. */
+    data class OneOff(val dueDate: LocalDate) : Recurrence
 }
 
 enum class IntervalUnit { DAYS, WEEKS, MONTHS }
@@ -77,6 +80,10 @@ fun nextDueDate(
             nextOrSameWeekday(lastCompletion.plusDays(1), recurrence.dayOfWeek)
         }
     }
+
+    // A one-off task's due date never moves -- whether it's hidden after
+    // completion is decided by the caller, not by the date math.
+    is Recurrence.OneOff -> recurrence.dueDate
 }
 
 private fun nextOrSameWeekday(from: LocalDate, target: DayOfWeek): LocalDate {

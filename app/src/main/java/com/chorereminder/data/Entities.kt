@@ -28,7 +28,7 @@ data class CategoryEntity(
 enum class IconType { MATERIAL, EMOJI }
 
 /** Discriminator for the [Recurrence] sealed type, flattened for Room storage. */
-enum class RecurrenceKind { RELATIVE, FIXED_INTERVAL, FIXED_WEEKDAY }
+enum class RecurrenceKind { RELATIVE, FIXED_INTERVAL, FIXED_WEEKDAY, ONE_OFF }
 
 @Entity(
     tableName = "tasks",
@@ -74,6 +74,8 @@ data class RecurrenceSpec(
             Recurrence.FixedInterval(anchor ?: createdDate, interval, unit)
         RecurrenceKind.FIXED_WEEKDAY ->
             Recurrence.FixedWeekday(dayOfWeek ?: createdDate.dayOfWeek)
+        // Reuses the `anchor` column as the one-off due date -- no new column needed.
+        RecurrenceKind.ONE_OFF -> Recurrence.OneOff(anchor ?: createdDate)
     }
 
     companion object {
@@ -92,6 +94,10 @@ data class RecurrenceSpec(
             is Recurrence.FixedWeekday -> RecurrenceSpec(
                 kind = RecurrenceKind.FIXED_WEEKDAY,
                 dayOfWeek = recurrence.dayOfWeek,
+            )
+            is Recurrence.OneOff -> RecurrenceSpec(
+                kind = RecurrenceKind.ONE_OFF,
+                anchor = recurrence.dueDate,
             )
         }
     }

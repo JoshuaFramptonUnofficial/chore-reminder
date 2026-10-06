@@ -52,5 +52,24 @@ fun formatRecurrence(spec: RecurrenceSpec): String {
                 ?: "week"
             "Every $day"
         }
+        RecurrenceKind.ONE_OFF -> "One-off"
     }
+}
+
+/**
+ * Explains what completing a not-yet-due task will actually do, since the effect
+ * differs by recurrence kind: a relative schedule moves to count from today, a
+ * fixed schedule's grid doesn't budge, and a one-off task simply goes away.
+ */
+fun formatEarlyCompletionMessage(
+    taskName: String,
+    kind: RecurrenceKind,
+    currentDue: LocalDate,
+    newNextDue: LocalDate,
+): String = when (kind) {
+    RecurrenceKind.ONE_OFF ->
+        "\"$taskName\" is due ${formatDate(currentDue)}. Marking it done now removes it for good."
+    else ->
+        "\"$taskName\" isn't due until ${formatDate(currentDue)}. Completing it now will set " +
+            "the next occurrence to ${formatDate(newNextDue)}."
 }
