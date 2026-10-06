@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- The only permission this app needs. No INTERNET: fully offline by design.
+         No SCHEDULE_EXACT_ALARM / USE_EXACT_ALARM / REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+         (PRD section 5 non-goal). work-runtime merges RECEIVE_BOOT_COMPLETED itself. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <application
+        android:name=".ChoreApp"
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.ChoreReminder">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.ChoreReminder">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Receives the notification's "Mark Complete" action. Not exported:
+             nothing outside the app has any business completing a chore. -->
+        <receiver
+            android:name=".notify.CompleteActionReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.chorereminder.action.COMPLETE" />
+            </intent-filter>
+        </receiver>
+
+    </application>
+
+</manifest>

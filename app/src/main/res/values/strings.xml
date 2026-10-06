@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Chores</string>
+    <string name="notification_channel_name">Chore reminders</string>
+    <string name="notification_channel_description">Reminders for chores that are due.</string>
+</resources>

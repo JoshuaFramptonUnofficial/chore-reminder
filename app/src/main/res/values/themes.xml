@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Compose owns all in-app theming (dynamic color is applied in Theme.kt).
+         This is only the pre-Compose window theme, so it just needs to be a
+         day/night-aware, chrome-less background. There is no framework
+         Theme.Material.DayNight.NoActionBar; DeviceDefault.DayNight plus the
+         no-title flags is the real equivalent. -->
+    <style name="Theme.ChoreReminder" parent="android:Theme.DeviceDefault.DayNight">
+        <item name="android:windowActionBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
