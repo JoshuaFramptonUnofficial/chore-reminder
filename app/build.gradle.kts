@@ -13,8 +13,8 @@ android {
         applicationId = "com.chorereminder"
         minSdk = 31
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.2"
+        versionCode = 10
+        versionName = "1.3"
     }
 
     buildTypes {

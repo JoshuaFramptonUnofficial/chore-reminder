@@ -20,7 +20,7 @@ Chores live in categories you define yourself — Kitchen, Laundry, Admin, Pets,
 
 <img src="docs/media/screenshot-icon-picker.png" width="220" align="left" />
 
-Picking an icon for a chore doesn't mean scrolling through a dozen icons that have nothing to do with housework. `material-icons-extended` would've added 66 MB to the APK just to get a handful of usable icons, so I pulled out a set of about 100 and grouped them by category — cleaning, kitchen, laundry, outdoors, admin, pets. If none of them fit, the system emoji keyboard is right there too (🐱 covers "feed the cat" just fine).
+Picking an icon for a chore doesn't mean scrolling through a dozen icons that have nothing to do with housework. `material-icons-extended` would've added 66 MB to the APK just to get a handful of usable icons, so I pulled out a set of about 100 and grouped them by category — cleaning, kitchen, laundry, outdoors, admin, pets. If none of them fit, the system emoji keyboard is right there too (🐱 covers "feed the cat" just fine). Type a name like "Water plants" or "Take out bins" and a Recommended row appears above the groups with a guess at the right icon, picked by matching words in the name against each icon's label and keywords — it's a suggestion, not something that auto-applies.
 
 <br clear="left"/>
 
@@ -39,13 +39,17 @@ Upcoming chores can appear immediately, a chosen time after completion, or a cho
 
 Completing a chore shows a short **Task completed / Undo** confirmation. Undo restores that specific occurrence, including one-off chores. The list keeps your scroll position by default, with an option in Settings to follow the completed chore instead.
 
+Not every chore that's due is a chore you can actually do right now. Swipe a card right, long-press it, or hit Delay… on the notification to push it back an hour, three hours, to tomorrow, or to a date you pick — the card picks up a tertiary "Delayed" badge instead of the usual overdue red until the snooze runs out. If a chore just shouldn't count this time around, swiping the other way or picking Skip asks you to confirm first (with a "Delay instead" escape hatch), then moves the occurrence on without logging it as done. Both delay and skip get the same undo pill as completing does.
+
 <br clear="right"/>
 
 <img src="docs/media/screenshot-settings.png" width="220" align="left" />
 
 Settings groups appearance, chore behaviour, categories, notifications and backups in one place. Export writes every chore, category, completion and visibility rule to a JSON file you control. Import confirms before replacing your current data. Older backup files remain readable; appearance and scrolling preferences stay local to the device.
 
-When something's due, you get a notification with a one-tap complete action right on it, so you don't have to open the app at all. Leave it incomplete and it will remind you again each day. Reminders target 09:00 local time, with delivery subject to notification permissions and Android's background scheduling.
+When something's due, you get a notification with Mark Complete, Delay… and Skip… actions right on it, so you don't have to open the app at all for the common cases. Leave it incomplete and it will remind you again each day. Reminders target 09:00 local time, with delivery subject to notification permissions and Android's background scheduling.
+
+There's also a home screen widget, for the chores you want visible without unlocking the phone. It resizes from a compact "3 chores due" at its smallest up to a list grouped by category at its largest, with its own settings (reachable from the widget picker or by resizing it later) for whether it shows upcoming chores too, icons, compact rows, and background opacity.
 
 The color scheme follows your wallpaper on Android 12+ and respects system light/dark mode. Buttons and confirmation dialogs use Liquid Glass, with adjustable blur and a live sample in Settings. The scrolling header uses a separate progressive backdrop blur; chore cards keep a simpler translucent surface for readability.
 
@@ -67,7 +71,7 @@ The app does not request `INTERNET`. It uses Android notifications and backgroun
 
 ## Built with
 
-Kotlin and Jetpack Compose (Material 3), with an MVVM setup and a small repository layer in between. Room handles storage, WorkManager fires the reminders, DataStore holds preferences, and kotlinx.serialization writes the backup JSON. The frosted-glass bits use [Haze](https://github.com/chrisbanes/haze) for the blur and [Kyant0's backdrop/shapes libraries](https://github.com/Kyant0/AndroidLiquidGlass) for the liquid-glass refraction on buttons and confirmation dialogs.
+Kotlin and Jetpack Compose (Material 3), with an MVVM setup and a small repository layer in between. Room handles storage, WorkManager fires the reminders, DataStore holds preferences, and kotlinx.serialization writes the backup JSON. The frosted-glass bits use [Haze](https://github.com/chrisbanes/haze) for the blur and [Kyant0's backdrop/shapes libraries](https://github.com/Kyant0/AndroidLiquidGlass) for the liquid-glass refraction on buttons and confirmation dialogs. The home screen widget is built with Jetpack Glance rather than classic RemoteViews XML, so it shares the same Compose-like layout code as the rest of the app.
 
 The recurrence math lives in an Android-free Kotlin package within the app module, which made it easy to throw a real test suite at it — interval math, month-end clamping (Jan 31 rolls to Feb 28, then recovers to Mar 31), leap years, the due/overdue boundary.
 
