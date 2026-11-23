@@ -58,7 +58,7 @@ class UndoQueueTest {
 
     @Test fun nonDefaultActionsArePreservedAcrossQueueOperations() {
         val queue = UndoQueue()
-        val delayed = UndoAction.Delayed(previousSnoozedUntil = null, previousSnoozeRevision = null)
+        val delayed = UndoAction.Delayed(previousSnoozedUntil = null, previousSnoozeRevision = null, previousLastNotifiedOn = null)
         queue.add(1, 1, 1000, taskId = 1, action = UndoAction.Skipped)
         queue.add(2, 2, 2000, taskId = 2, action = delayed)
         assertEquals(UndoAction.Skipped, queue.take(1, 2100)!!.action)

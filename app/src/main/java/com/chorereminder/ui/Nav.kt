@@ -15,6 +15,9 @@ import com.chorereminder.ui.theme.LocalLiquidGlassBlur
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -64,6 +67,14 @@ fun ChoreNavHost(
                 launchSingleTop = true
             }
         }
+    }
+
+    // A replay(1) SharedFlow would re-fire on every later visit to any complete
+    // screen if collected there directly, so it's consumed exactly once here and
+    // handed down as a plain value matched against the destination's own taskId.
+    var pendingDelayTaskId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(notificationDelayTaskIds) {
+        notificationDelayTaskIds.collect { taskId -> pendingDelayTaskId = taskId }
     }
 
     // Shared screen transitions: a short horizontal slide paired with a fade, so
@@ -154,7 +165,8 @@ fun ChoreNavHost(
                 viewModel = vm,
                 onFinished = leave,
                 onDismiss = leave,
-                autoOpenDelayForTaskId = notificationDelayTaskIds,
+                openDelayImmediately = pendingDelayTaskId == taskId,
+                onDelayFlagConsumed = { pendingDelayTaskId = null },
             )
         }
     }

@@ -157,16 +157,19 @@ class AppContainer(private val context: Context) {
      */
     suspend fun delayTask(taskId: Long, expectedRevision: Long, option: DelayOption) = reminderMutex.withLock {
         val before = repository.getTask(taskId) ?: return@withLock
+        val previousLastNotifiedOn = reminderHistory.lastNotifiedOn(taskId)
         val until = option.resolve(Instant.now())
         repository.snoozeTask(taskId, expectedRevision, until) ?: return@withLock
         changed(taskId, expectedRevision + 1)
-        // A delay re-arms today's slot, so today's delivery receipt must not block it.
+        // A delay re-arms today's slot, so today's delivery receipt must not block
+        // it -- undo below puts it back, so undoing a delay can't cause a second
+        // notification to slip out on a day one already went out.
         reminderHistory.forget(taskId)
         Notifications.cancel(context, taskId)
         repository.getTask(taskId)?.let { ReminderScheduler.schedule(context, it) }
         undoQueue.add(
             taskId, expectedRevision + 1, android.os.SystemClock.elapsedRealtime(), taskId,
-            action = UndoAction.Delayed(before.task.snoozedUntil, before.task.snoozeRevision),
+            action = UndoAction.Delayed(before.task.snoozedUntil, before.task.snoozeRevision, previousLastNotifiedOn),
         )
     }
 
@@ -189,6 +192,11 @@ class AppContainer(private val context: Context) {
                     receipt.taskId, receipt.revision, action.previousSnoozedUntil, action.previousSnoozeRevision,
                 ) ?: return@withLock
                 changed(restored.id, receipt.revision + 1)
+                // Put back whatever delivery receipt the delay cleared, so undoing
+                // it can't re-open today's already-used notification slot.
+                if (action.previousLastNotifiedOn != null) {
+                    reminderHistory.markNotified(restored.id, action.previousLastNotifiedOn)
+                }
                 restored.id
             }
         }

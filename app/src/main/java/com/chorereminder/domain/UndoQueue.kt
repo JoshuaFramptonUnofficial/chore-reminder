@@ -11,7 +11,12 @@ import kotlinx.coroutines.flow.asStateFlow
 sealed interface UndoAction {
     data object Completed : UndoAction
     data object Skipped : UndoAction
-    data class Delayed(val previousSnoozedUntil: java.time.Instant?, val previousSnoozeRevision: Long?) : UndoAction
+    data class Delayed(
+        val previousSnoozedUntil: java.time.Instant?,
+        val previousSnoozeRevision: Long?,
+        /** What `reminderHistory.lastNotifiedOn` was before the delay cleared it, if anything. */
+        val previousLastNotifiedOn: java.time.LocalDate?,
+    ) : UndoAction
 }
 
 data class UndoReceipt(val completionId: Long, val revision: Long, val expiresAt: Long, val taskId: Long,

@@ -44,8 +44,6 @@ import com.chorereminder.ui.theme.glassPanel
 import com.chorereminder.ui.theme.glassSource
 import com.chorereminder.ui.theme.glassTint
 import dev.chrisbanes.haze.rememberHazeState
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.emptyFlow
 import java.time.LocalDate
 
 /**
@@ -60,16 +58,14 @@ fun CompleteScreen(
     viewModel: CompleteViewModel,
     onFinished: () -> Unit,
     onDismiss: () -> Unit,
-    /** Task ids from the notification's Delay... action -- opens straight to the picker. */
-    autoOpenDelayForTaskId: Flow<Long> = emptyFlow(),
+    /** True when the notification's Delay... action (not just a tap) opened this screen. */
+    openDelayImmediately: Boolean = false,
+    /** Called once [openDelayImmediately] has been acted on, so it isn't replayed on a later visit. */
+    onDelayFlagConsumed: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val hazeState = rememberHazeState()
     val today by viewModel.today.collectAsStateWithLifecycle()
-    var openDelayFromNotification by remember { mutableStateOf(false) }
-    LaunchedEffect(autoOpenDelayForTaskId) {
-        autoOpenDelayForTaskId.collect { openDelayFromNotification = true }
-    }
 
     Box(
         modifier = Modifier
@@ -101,10 +97,10 @@ fun CompleteScreen(
                 val view = s.task
                 var confirmEarly by remember(view.task.id) { mutableStateOf(false) }
                 var showDelaySheet by remember(view.task.id) { mutableStateOf(false) }
-                LaunchedEffect(openDelayFromNotification) {
-                    if (openDelayFromNotification) {
+                LaunchedEffect(openDelayImmediately) {
+                    if (openDelayImmediately) {
                         showDelaySheet = true
-                        openDelayFromNotification = false
+                        onDelayFlagConsumed()
                     }
                 }
                 ConfirmCard(hazeState) {
