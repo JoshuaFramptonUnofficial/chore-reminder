@@ -25,18 +25,20 @@ object Notifications {
     const val EXTRA_GENERATION = "com.chorereminder.extra.GENERATION"
     /** Set on the content intent for the Delay action, so the app opens straight to the picker. */
     const val EXTRA_OPEN_DELAY = "com.chorereminder.extra.OPEN_DELAY"
+    /** Set on the content intent for the Skip action, so the app opens straight to the confirmation. */
+    const val EXTRA_OPEN_SKIP = "com.chorereminder.extra.OPEN_SKIP"
 
     const val ACTION_COMPLETE = "com.chorereminder.action.COMPLETE"
 
     /**
      * PendingIntent identity ignores extras, so every task needs its own request
      * code or they all collapse onto the last-scheduled task. Content tap and each
-     * action button also need distinct codes from each other. Spaced by 4 so a
-     * fourth action (e.g. Skip) can be added later without renumbering these.
+     * action button also need distinct codes from each other.
      */
     private fun contentRequestCode(taskId: Long) = taskId.toInt() * 4
     private fun actionRequestCode(taskId: Long) = taskId.toInt() * 4 + 1
     private fun delayRequestCode(taskId: Long) = taskId.toInt() * 4 + 2
+    private fun skipRequestCode(taskId: Long) = taskId.toInt() * 4 + 3
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -112,6 +114,21 @@ object Notifications {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+        // "Skip..." must ask "are you sure" before it takes effect, so it also
+        // opens the app rather than acting from the background.
+        val skipIntent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            putExtra(EXTRA_TASK_ID, taskId)
+            putExtra(EXTRA_OPEN_SKIP, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val skipPending = PendingIntent.getActivity(
+            context,
+            skipRequestCode(taskId),
+            skipIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
         val emoji = if (view.task.iconType == IconType.EMOJI) "${view.task.iconValue} " else ""
         val title = "$emoji${view.task.name}"
         val body = when {
@@ -131,6 +148,7 @@ object Notifications {
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .addAction(0, "Mark Complete", completePending)
             .addAction(0, "Delay…", delayPending)
+            .addAction(0, "Skip…", skipPending)
             .build()
 
         try {

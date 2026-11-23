@@ -29,6 +29,8 @@ class MainActivity : ComponentActivity() {
     private val notificationTaskIds = MutableSharedFlow<Long>(replay = 1, extraBufferCapacity = 4)
     /** Emits when the notification's Delay... action -- not just a plain tap -- opened the app. */
     private val notificationDelayTaskIds = MutableSharedFlow<Long>(replay = 1, extraBufferCapacity = 4)
+    /** Emits when the notification's Skip... action -- not just a plain tap -- opened the app. */
+    private val notificationSkipTaskIds = MutableSharedFlow<Long>(replay = 1, extraBufferCapacity = 4)
     private var remindersEnabled = false
 
     private val requestNotificationPermission =
@@ -57,6 +59,7 @@ class MainActivity : ComponentActivity() {
                         container = container,
                         notificationTaskIds = notificationTaskIds,
                         notificationDelayTaskIds = notificationDelayTaskIds,
+                        notificationSkipTaskIds = notificationSkipTaskIds,
                     )
                 }
             }
@@ -96,9 +99,13 @@ class MainActivity : ComponentActivity() {
             if (intent?.getBooleanExtra(Notifications.EXTRA_OPEN_DELAY, false) == true) {
                 notificationDelayTaskIds.tryEmit(taskId)
             }
+            if (intent?.getBooleanExtra(Notifications.EXTRA_OPEN_SKIP, false) == true) {
+                notificationSkipTaskIds.tryEmit(taskId)
+            }
             // Consume it, so a configuration change doesn't re-navigate.
             intent?.removeExtra(Notifications.EXTRA_TASK_ID)
             intent?.removeExtra(Notifications.EXTRA_OPEN_DELAY)
+            intent?.removeExtra(Notifications.EXTRA_OPEN_SKIP)
         }
     }
 

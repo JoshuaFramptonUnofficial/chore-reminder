@@ -11,7 +11,6 @@ import com.chorereminder.data.TaskView
 import com.chorereminder.domain.DueState
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -53,7 +52,7 @@ class NotificationsTest {
     }
 
     @Test
-    fun postedNotification_offersDistinctCompleteAndDelayActions() {
+    fun postedNotification_offersDistinctCompleteDelayAndSkipActions() {
         val app = RuntimeEnvironment.getApplication()
         shadowOf(app).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
         val view = TaskView(
@@ -72,9 +71,11 @@ class NotificationsTest {
             .getNotification(view.task.notificationId)
         assertNotNull(posted)
         val actions = posted.actions
-        assertEquals(2, actions.size)
+        assertEquals(3, actions.size)
         assertEquals("Mark Complete", actions[0].title)
         assertEquals("Delay…", actions[1].title)
-        assertNotEquals(actions[0].actionIntent, actions[1].actionIntent)
+        assertEquals("Skip…", actions[2].title)
+        val intents = actions.map { it.actionIntent }
+        assertEquals(intents.size, intents.distinct().size)
     }
 }

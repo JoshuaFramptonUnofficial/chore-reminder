@@ -59,6 +59,8 @@ fun ChoreNavHost(
     notificationTaskIds: Flow<Long>,
     /** Task ids from the notification's Delay... action specifically -- opens straight to the picker. */
     notificationDelayTaskIds: Flow<Long> = kotlinx.coroutines.flow.emptyFlow(),
+    /** Task ids from the notification's Skip... action specifically -- opens straight to the confirmation. */
+    notificationSkipTaskIds: Flow<Long> = kotlinx.coroutines.flow.emptyFlow(),
     navController: NavHostController = rememberNavController(),
 ) {
     LaunchedEffect(notificationTaskIds) {
@@ -75,6 +77,10 @@ fun ChoreNavHost(
     var pendingDelayTaskId by remember { mutableStateOf<Long?>(null) }
     LaunchedEffect(notificationDelayTaskIds) {
         notificationDelayTaskIds.collect { taskId -> pendingDelayTaskId = taskId }
+    }
+    var pendingSkipTaskId by remember { mutableStateOf<Long?>(null) }
+    LaunchedEffect(notificationSkipTaskIds) {
+        notificationSkipTaskIds.collect { taskId -> pendingSkipTaskId = taskId }
     }
 
     // Shared screen transitions: a short horizontal slide paired with a fade, so
@@ -167,6 +173,8 @@ fun ChoreNavHost(
                 onDismiss = leave,
                 openDelayImmediately = pendingDelayTaskId == taskId,
                 onDelayFlagConsumed = { pendingDelayTaskId = null },
+                openSkipImmediately = pendingSkipTaskId == taskId,
+                onSkipFlagConsumed = { pendingSkipTaskId = null },
             )
         }
     }
