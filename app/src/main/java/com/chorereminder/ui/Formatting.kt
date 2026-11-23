@@ -86,3 +86,18 @@ fun formatEarlyCompletionMessage(
         "\"$taskName\" isn't due until ${formatDate(currentDue)}. Completing it now will set " +
             "the next occurrence to ${formatDate(newNextDue)}."
 }
+
+/**
+ * Explains what skipping an occurrence will do -- it consumes the current due
+ * date exactly like completing does, just without logging it as done.
+ */
+fun formatSkipMessage(
+    taskName: String,
+    kind: RecurrenceKind,
+    newNextDue: LocalDate,
+): String = when (kind) {
+    RecurrenceKind.ONE_OFF ->
+        "\"$taskName\" will be removed from your list. You can undo this from Home."
+    else ->
+        "\"$taskName\" won't be marked done. Its next occurrence moves to ${formatDate(newNextDue)}."
+}

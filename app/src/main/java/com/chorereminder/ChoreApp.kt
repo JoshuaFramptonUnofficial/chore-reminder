@@ -142,13 +142,28 @@ class AppContainer(private val context: Context) {
     suspend fun completeTask(taskId: Long, expectedRevision: Long, generation: String? = null) = reminderMutex.withLock {
         currentCoroutineContext().ensureActive()
         if (generation != null && generation != reminderHistory.generation()) return@withLock
-        val completed = repository.completeTask(taskId, expectedRevision) ?: return@withLock
+        recordOccurrence(taskId, expectedRevision, com.chorereminder.data.CompletionOutcome.DONE, UndoAction.Completed)
+    }
+
+    /** Same occurrence math as [completeTask], but the row records a skip, not a completion. */
+    suspend fun skipTask(taskId: Long, expectedRevision: Long) = reminderMutex.withLock {
+        recordOccurrence(taskId, expectedRevision, com.chorereminder.data.CompletionOutcome.SKIPPED, UndoAction.Skipped)
+    }
+
+    /** Shared by complete and skip: both consume the current occurrence identically. */
+    private suspend fun recordOccurrence(
+        taskId: Long,
+        expectedRevision: Long,
+        outcome: com.chorereminder.data.CompletionOutcome,
+        action: UndoAction,
+    ) {
+        val recorded = repository.completeTask(taskId, expectedRevision, outcome = outcome) ?: return
         changed(taskId, expectedRevision + 1)
         Notifications.cancel(context, taskId)
         val next = repository.getTask(taskId)
         if (next == null) ReminderScheduler.cancel(context, taskId)
         else ReminderScheduler.schedule(context, next)
-        undoQueue.add(completed.id, expectedRevision + 1, android.os.SystemClock.elapsedRealtime(), taskId)
+        undoQueue.add(recorded.id, expectedRevision + 1, android.os.SystemClock.elapsedRealtime(), taskId, action = action)
     }
 
     /**
