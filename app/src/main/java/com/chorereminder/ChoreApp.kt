@@ -26,6 +26,7 @@ import com.chorereminder.data.TaskEntity
 import com.chorereminder.notify.Notifications
 import com.chorereminder.notify.ReminderHistory
 import com.chorereminder.notify.ReminderScheduler
+import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -78,6 +79,11 @@ class AppContainer(private val context: Context) {
     private val dateChanges = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     fun refreshDate() { _today.value = LocalDate.now(); dateChanges.trySend(Unit) }
 
+    /** Widgets show a due/overdue list derived from `today`, so they need the same nudge. */
+    private fun refreshWidgets() {
+        applicationScope.launch { com.chorereminder.widget.ChoreWidget().updateAll(context) }
+    }
+
     init {
         androidx.core.content.ContextCompat.registerReceiver(
             context,
@@ -94,6 +100,7 @@ class AppContainer(private val context: Context) {
         applicationScope.launch {
             while (true) {
                 _today.value = LocalDate.now()
+                refreshWidgets()
                 val now = ZonedDateTime.now()
                 val midnight = now.toLocalDate().plusDays(1).atStartOfDay(now.zone)
                 kotlinx.coroutines.withTimeoutOrNull(Duration.between(now, midnight).toMillis().coerceAtLeast(1)) { dateChanges.receive() }
@@ -119,6 +126,7 @@ class AppContainer(private val context: Context) {
     suspend fun createTask(task: TaskEntity): Long = reminderMutex.withLock {
         val id = repository.insertTask(task)
         repository.getTask(id)?.let { ReminderScheduler.schedule(context, it) }
+        refreshWidgets()
         id
     }
 
@@ -128,6 +136,7 @@ class AppContainer(private val context: Context) {
         undoQueue.removeTask(task.id, android.os.SystemClock.elapsedRealtime())
         repository.updateTask(task.copy(completionRevision = current.task.completionRevision + 1))
         repository.getTask(task.id)?.let { ReminderScheduler.schedule(context, it) }
+        refreshWidgets()
     }
 
     /** FR-3: deleting a task cancels its pending reminder. */
@@ -136,6 +145,7 @@ class AppContainer(private val context: Context) {
         ReminderScheduler.cancel(context, taskId)
         repository.deleteTask(taskId)
         reminderHistory.forget(taskId)
+        refreshWidgets()
     }
 
     /** Occurrence comparison and completion insert are atomic in Room. */
@@ -164,6 +174,7 @@ class AppContainer(private val context: Context) {
         if (next == null) ReminderScheduler.cancel(context, taskId)
         else ReminderScheduler.schedule(context, next)
         undoQueue.add(recorded.id, expectedRevision + 1, android.os.SystemClock.elapsedRealtime(), taskId, action = action)
+        refreshWidgets()
     }
 
     /**
@@ -186,6 +197,7 @@ class AppContainer(private val context: Context) {
             taskId, expectedRevision + 1, android.os.SystemClock.elapsedRealtime(), taskId,
             action = UndoAction.Delayed(before.task.snoozedUntil, before.task.snoozeRevision, previousLastNotifiedOn),
         )
+        refreshWidgets()
     }
 
     /**
@@ -218,6 +230,7 @@ class AppContainer(private val context: Context) {
         Notifications.cancel(context, taskId)
         // Keep today's delivery receipt: undo restores the chore without re-alerting.
         repository.getTask(taskId)?.let { ReminderScheduler.schedule(context, it) }
+        refreshWidgets()
     }
 
     /** Parse/replace first; failed imports must preserve both data and reminders. */
@@ -230,6 +243,7 @@ class AppContainer(private val context: Context) {
             Notifications.cancelAll(context)
             reminderHistory.clear()
             repository.getAllTasks().forEach { ReminderScheduler.schedule(context, it) }
+            refreshWidgets()
         }
         result
     }

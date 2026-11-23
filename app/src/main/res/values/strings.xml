@@ -3,4 +3,5 @@
     <string name="app_name">Chores</string>
     <string name="notification_channel_name">Chore reminders</string>
     <string name="notification_channel_description">Reminders for chores that are due.</string>
+    <string name="widget_description">Shows chores that are due or overdue.</string>
 </resources>
