@@ -42,6 +42,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -392,7 +393,7 @@ private fun TaskCard(
     SwipeToDismissBox(
         state = dismissState,
         modifier = modifier.fillMaxWidth(),
-        backgroundContent = { TaskSwipeBackground(shape, dismissState.dismissDirection) },
+        backgroundContent = { TaskSwipeBackground(shape, dismissState) },
     ) {
         val interactionSource = remember { MutableInteractionSource() }
         val scale by rememberPressScale(interactionSource, pressedScale = 0.97f)
@@ -477,14 +478,28 @@ private fun TaskCard(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TaskSwipeBackground(shape: RoundedCornerShape, direction: SwipeToDismissBoxValue) {
-    val skip = direction == SwipeToDismissBoxValue.StartToEnd
+private fun TaskSwipeBackground(shape: RoundedCornerShape, dismissState: SwipeToDismissBoxState) {
+    // dismissDirection is safe to read during composition (returns Settled
+    // before the first layout pass); requireOffset() is not -- Compose can call
+    // a graphicsLayer lambda as early as node-attach/semantics time, before the
+    // dismiss state's anchors exist at all, so it still needs a defensive
+    // fallback even when deferred this way.
+    val skip = dismissState.dismissDirection == SwipeToDismissBoxValue.StartToEnd
     val containerColor = if (skip) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer
     val contentColor = if (skip) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer
     Box(
+        // fillMaxSize, not just fillMaxWidth -- without a height this only wrapped
+        // its own text and floated at the top of the row. And it's only shown
+        // while actually dragged: the card above it is translucent glass, so an
+        // always-visible background would otherwise bleed through as a watermark.
         modifier = Modifier
-            .fillMaxWidth()
+            .fillMaxSize()
+            .graphicsLayer {
+                val offset = runCatching { dismissState.requireOffset() }.getOrDefault(0f)
+                alpha = if (offset == 0f) 0f else 1f
+            }
             .clip(shape)
             .background(containerColor)
             .padding(horizontal = 20.dp),
