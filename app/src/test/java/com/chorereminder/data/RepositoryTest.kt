@@ -122,7 +122,7 @@ class RepositoryTest {
         val id = task(RecurrenceKind.ONE_OFF)
         repository.completeTask(id, 0, at)
         assertTrue(manager.export(uri) is BackupResult.Success)
-        assertTrue(file.readText().contains("\"version\": 4"))
+        assertTrue(file.readText().contains("\"version\": 5"))
         repository.replaceAll(listOf(CategoryEntity(1, "Uncategorized")), emptyList(), emptyList())
         assertTrue(manager.import(uri) is BackupResult.Success)
         assertNull(repository.getTask(id))
@@ -252,6 +252,62 @@ class RepositoryTest {
             completions = backup.completions.map { it.copy(scheduledDue = null, scheduleKey = null) })))
         assertTrue(manager.import(uri) is BackupResult.Success)
         assertEquals(LocalDate.parse("2026-11-16"), repository.getTask(id)!!.nextDue) // legacy fallback, no fabricated date
+    }
+
+    @Test fun snoozeIsHeldAsLongAsTheRevisionMatches_andLapsesOnAnyLaterMutation() = runBlocking {
+        val id = task()
+        val until = at.plusSeconds(3600)
+        val snoozed = repository.snoozeTask(id, 0, until)!!
+        assertEquals(until, snoozed.snoozedUntil)
+        assertEquals(1L, snoozed.snoozeRevision)
+        assertEquals(1L, snoozed.completionRevision)
+        // Completing bumps the revision; the stale snooze no longer matches it.
+        repository.completeTask(id, 1, at)
+        val after = repository.getTask(id)!!.task
+        assertNotEquals(after.completionRevision, after.snoozeRevision)
+    }
+
+    @Test fun snoozeRejectsAStaleRevision() = runBlocking {
+        val id = task()
+        repository.completeTask(id, 0, at)
+        assertNull(repository.snoozeTask(id, 0, at.plusSeconds(3600)))
+        assertNotNull(repository.snoozeTask(id, 1, at.plusSeconds(3600)))
+    }
+
+    @Test fun restoreSnoozeUndoesADelay() = runBlocking {
+        val id = task()
+        repository.snoozeTask(id, 0, at.plusSeconds(3600))
+        val restored = repository.restoreSnooze(id, 1, previousSnoozedUntil = null, previousSnoozeRevision = null)!!
+        assertNull(restored.snoozedUntil)
+        assertNull(restored.snoozeRevision)
+        assertEquals(2L, restored.completionRevision)
+    }
+
+    @Test fun skippingAdvancesTheNextDueDate_justLikeCompleting() = runBlocking {
+        val id = task()
+        val original = repository.getTask(id)!!.nextDue
+        repository.completeTask(id, 0, at, outcome = CompletionOutcome.SKIPPED)
+        assertEquals(original.plusDays(7), repository.getTask(id)!!.nextDue)
+    }
+
+    @Test fun skippedOccurrencesDoNotCountTowardCompletionCount() = runBlocking {
+        val id = task()
+        repository.completeTask(id, 0, at, outcome = CompletionOutcome.DONE)
+        repository.completeTask(id, 1, at.plusSeconds(1), outcome = CompletionOutcome.SKIPPED)
+        assertEquals(1, repository.getTask(id)!!.completionCount)
+    }
+
+    @Test fun skippingAOneOffHidesItJustLikeCompletingDoes() = runBlocking {
+        val id = task(RecurrenceKind.ONE_OFF)
+        repository.completeTask(id, 0, at, outcome = CompletionOutcome.SKIPPED)
+        assertNull(repository.getTask(id))
+    }
+
+    @Test fun undoRestoresASkippedOccurrence() = runBlocking {
+        val id = task()
+        val skip = repository.completeTask(id, 0, at, outcome = CompletionOutcome.SKIPPED)!!
+        assertNotNull(repository.undo(skip.id))
+        assertEquals(0, repository.getTask(id)!!.completionCount)
     }
 
     @Test fun localCompletionDateSurvivesTimezoneChange() = runBlocking {

@@ -9,7 +9,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
     entities = [CategoryEntity::class, TaskEntity::class, CompletionEntity::class, VisibilitySettingsEntity::class],
-    version = 4,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -40,6 +40,19 @@ abstract class ChoreDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tasks ADD COLUMN snoozedUntil INTEGER")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN snoozeRevision INTEGER")
+            }
+        }
+
+        val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE completions ADD COLUMN outcome TEXT NOT NULL DEFAULT 'DONE'")
+            }
+        }
+
         @Volatile
         private var instance: ChoreDatabase? = null
 
@@ -49,7 +62,7 @@ abstract class ChoreDatabase : RoomDatabase() {
 
         private fun build(context: Context): ChoreDatabase =
             Room.databaseBuilder(context, ChoreDatabase::class.java, "chores.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         // FR-12: a default category must always exist so a task can

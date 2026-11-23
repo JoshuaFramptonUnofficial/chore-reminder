@@ -30,6 +30,9 @@ enum class IconType { MATERIAL, EMOJI }
 /** Discriminator for the [Recurrence] sealed type, flattened for Room storage. */
 enum class RecurrenceKind { RELATIVE, FIXED_INTERVAL, FIXED_WEEKDAY, ONE_OFF }
 
+/** Whether a completion row records the chore actually being done, or skipped. */
+enum class CompletionOutcome { DONE, SKIPPED }
+
 @Entity(
     tableName = "tasks",
     foreignKeys = [
@@ -52,6 +55,13 @@ data class TaskEntity(
     @ColumnInfo(defaultValue = "1") val categoryId: Long = UNCATEGORIZED_ID,
     val createdDate: LocalDate,
     @ColumnInfo(defaultValue = "0") val completionRevision: Long = 0,
+    /**
+     * A snooze set by delaying the chore. Only honoured while [snoozeRevision]
+     * still matches [completionRevision] -- any later complete, skip or edit
+     * bumps the revision, which lets a stale snooze lapse with no cleanup code.
+     */
+    val snoozedUntil: Instant? = null,
+    val snoozeRevision: Long? = null,
     @Embedded(prefix = "visibility_") val visibility: VisibilitySpec? = null,
     @Embedded(prefix = "rec_") val recurrence: RecurrenceSpec,
 ) {
@@ -127,6 +137,7 @@ data class CompletionEntity(
     /** Due date consumed by this action; legacy history has neither field. */
     val scheduledDue: LocalDate? = null,
     val scheduleKey: String? = null,
+    @ColumnInfo(defaultValue = "DONE") val outcome: CompletionOutcome = CompletionOutcome.DONE,
 )
 
 /** Projection for [ChoreDao.observeCategoryTaskCounts]. */

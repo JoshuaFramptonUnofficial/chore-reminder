@@ -48,4 +48,11 @@ class Converters {
     @TypeConverter
     fun nameToRecurrenceKind(value: String?): RecurrenceKind? =
         value?.let(RecurrenceKind::valueOf)
+
+    @TypeConverter
+    fun completionOutcomeToName(value: CompletionOutcome?): String? = value?.name
+
+    @TypeConverter
+    fun nameToCompletionOutcome(value: String?): CompletionOutcome? =
+        value?.let(CompletionOutcome::valueOf)
 }

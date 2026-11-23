@@ -107,8 +107,22 @@ class ChoreRepository(private val dao: ChoreDao) {
 
     suspend fun deleteTask(taskId: Long) = dao.deleteTask(taskId)
 
-    suspend fun completeTask(taskId: Long, expectedRevision: Long, at: Instant = Instant.now()): CompletionEntity? =
-        dao.complete(taskId, expectedRevision, at)
+    suspend fun completeTask(
+        taskId: Long,
+        expectedRevision: Long,
+        at: Instant = Instant.now(),
+        outcome: CompletionOutcome = CompletionOutcome.DONE,
+    ): CompletionEntity? = dao.complete(taskId, expectedRevision, at, outcome)
+
+    suspend fun snoozeTask(taskId: Long, expectedRevision: Long, until: Instant): TaskEntity? =
+        dao.snooze(taskId, expectedRevision, until)
+
+    suspend fun restoreSnooze(
+        taskId: Long,
+        revision: Long,
+        previousSnoozedUntil: Instant?,
+        previousSnoozeRevision: Long?,
+    ): TaskEntity? = dao.restoreSnooze(taskId, revision, previousSnoozedUntil, previousSnoozeRevision)
 
     suspend fun createCategory(name: String): Long {
         val trimmed = name.trim()
@@ -159,7 +173,7 @@ fun TaskWithDetails.toView(today: LocalDate): TaskView {
         nextDue = nextDue,
         dueState = dueStateFor(nextDue, today),
         lastCompletedOn = lastCompletedOn,
-        completionCount = completions.size,
+        completionCount = completions.count { it.outcome == CompletionOutcome.DONE },
         occurrenceRevision = task.completionRevision,
     )
 }

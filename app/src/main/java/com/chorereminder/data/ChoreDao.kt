@@ -20,7 +20,12 @@ interface ChoreDao {
 
     /** Compare the displayed occurrence inside the same transaction as the write. */
     @Transaction
-    suspend fun complete(taskId: Long, expectedRevision: Long, at: java.time.Instant): CompletionEntity? {
+    suspend fun complete(
+        taskId: Long,
+        expectedRevision: Long,
+        at: java.time.Instant,
+        outcome: CompletionOutcome = CompletionOutcome.DONE,
+    ): CompletionEntity? {
         val details = getTaskWithDetails(taskId) ?: return null
         if (details.task.completionRevision != expectedRevision) return null
         if (details.task.recurrence.kind == RecurrenceKind.ONE_OFF && details.completions.isNotEmpty()) return null
@@ -29,10 +34,46 @@ interface ChoreDao {
             completedOn = at.atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
             scheduledDue = details.toView(at.atZone(java.time.ZoneId.systemDefault()).toLocalDate()).nextDue,
             scheduleKey = details.task.recurrence.toDomain(details.task.createdDate).scheduleKey(),
+            outcome = outcome,
         )
         val inserted = completion.copy(id = insertCompletion(completion))
+        // The revision bump alone invalidates any pending snooze: it no longer
+        // matches snoozeRevision, so there's nothing to clear here explicitly.
         updateTask(details.task.copy(completionRevision = details.task.completionRevision + 1))
         return inserted
+    }
+
+    /** Sets a snooze, guarded by the same optimistic-concurrency check as [complete]. */
+    @Transaction
+    suspend fun snooze(taskId: Long, expectedRevision: Long, until: java.time.Instant): TaskEntity? {
+        val details = getTaskWithDetails(taskId) ?: return null
+        if (details.task.completionRevision != expectedRevision) return null
+        val updated = details.task.copy(
+            completionRevision = expectedRevision + 1,
+            snoozedUntil = until,
+            snoozeRevision = expectedRevision + 1,
+        )
+        updateTask(updated)
+        return updated
+    }
+
+    /** Reverts a snooze for undo -- restores whatever snooze state preceded it. */
+    @Transaction
+    suspend fun restoreSnooze(
+        taskId: Long,
+        revision: Long,
+        previousSnoozedUntil: java.time.Instant?,
+        previousSnoozeRevision: Long?,
+    ): TaskEntity? {
+        val details = getTaskWithDetails(taskId) ?: return null
+        if (details.task.completionRevision != revision) return null
+        val updated = details.task.copy(
+            completionRevision = revision + 1,
+            snoozedUntil = previousSnoozedUntil,
+            snoozeRevision = previousSnoozeRevision,
+        )
+        updateTask(updated)
+        return updated
     }
 
     @Transaction

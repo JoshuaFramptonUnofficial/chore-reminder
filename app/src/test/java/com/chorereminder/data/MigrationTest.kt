@@ -68,16 +68,22 @@ class MigrationTest {
                 sqlite.version = version
             }
             val migrated = Room.databaseBuilder(app, ChoreDatabase::class.java, name)
-                .addMigrations(ChoreDatabase.MIGRATION_1_2, ChoreDatabase.MIGRATION_2_3, ChoreDatabase.MIGRATION_3_4).allowMainThreadQueries().build()
+                .addMigrations(
+                    ChoreDatabase.MIGRATION_1_2, ChoreDatabase.MIGRATION_2_3, ChoreDatabase.MIGRATION_3_4,
+                    ChoreDatabase.MIGRATION_4_5, ChoreDatabase.MIGRATION_5_6,
+                ).allowMainThreadQueries().build()
             try {
                 val task = migrated.choreDao().getTaskWithDetails(1)!!.task
                 assertEquals("Existing chore", task.name)
                 assertEquals(0L, task.completionRevision)
                 assertNull(task.visibility)
+                assertNull(task.snoozedUntil)
+                assertNull(task.snoozeRevision)
                 val legacy = migrated.choreDao().getTaskWithDetails(1)!!.lastCompletion!!
                 assertEquals(java.time.LocalDate.ofEpochDay(20010), legacy.completedOn)
                 assertNull(legacy.scheduledDue)
                 assertNull(legacy.scheduleKey)
+                assertEquals(CompletionOutcome.DONE, legacy.outcome)
                 assertNotNull(migrated.choreDao().complete(1, 0, java.time.Instant.now()))
             } finally { migrated.close(); app.deleteDatabase(name) }
         }

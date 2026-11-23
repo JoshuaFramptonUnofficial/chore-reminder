@@ -23,7 +23,7 @@ data class BackupFile(
     val defaultVisibility: VisibilitySpec = VisibilitySpec(),
 ) {
     companion object {
-        const val CURRENT_VERSION = 4
+        const val CURRENT_VERSION = 5
     }
 }
 
@@ -51,6 +51,9 @@ data class BackupTask(
     val dayOfWeek: String? = null,
     val completionRevision: Long = 0,
     val visibility: VisibilitySpec? = null,
+    /** ISO-8601 instant; absent (and null) for backups made before delay existed. */
+    val snoozedUntil: String? = null,
+    val snoozeRevision: Long? = null,
 )
 
 @Serializable
@@ -62,6 +65,8 @@ data class BackupCompletion(
     val completedOn: String,
     val scheduledDue: String? = null,
     val scheduleKey: String? = null,
+    /** Absent in backups made before skip existed -- those are all completions. */
+    val outcome: String = "DONE",
 )
 
 // --- Mapping ------------------------------------------------------------------
@@ -84,6 +89,8 @@ fun TaskEntity.toBackup() = BackupTask(
     dayOfWeek = recurrence.dayOfWeek?.name,
     completionRevision = completionRevision,
     visibility = visibility,
+    snoozedUntil = snoozedUntil?.toString(),
+    snoozeRevision = snoozeRevision,
 )
 
 /** Throws on malformed input; callers parse inside a try so the import rolls back. */
@@ -96,6 +103,8 @@ fun BackupTask.toEntity() = TaskEntity(
     createdDate = LocalDate.parse(createdDate),
     completionRevision = completionRevision,
     visibility = visibility,
+    snoozedUntil = snoozedUntil?.let(Instant::parse),
+    snoozeRevision = snoozeRevision,
     recurrence = RecurrenceSpec(
         kind = RecurrenceKind.valueOf(recurrenceKind),
         interval = interval,
@@ -112,6 +121,7 @@ fun CompletionEntity.toBackup() = BackupCompletion(
     completedOn = completedOn.toString(),
     scheduledDue = scheduledDue?.toString(),
     scheduleKey = scheduleKey,
+    outcome = outcome.name,
 )
 
 fun BackupCompletion.toEntity() = CompletionEntity(
@@ -121,4 +131,5 @@ fun BackupCompletion.toEntity() = CompletionEntity(
     completedOn = LocalDate.parse(completedOn),
     scheduledDue = scheduledDue?.let(LocalDate::parse),
     scheduleKey = scheduleKey,
+    outcome = CompletionOutcome.valueOf(outcome),
 )
