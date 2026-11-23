@@ -18,6 +18,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,15 +32,20 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chorereminder.domain.DueState
 import com.chorereminder.domain.nextDueDate
+import com.chorereminder.ui.DelaySheet
 import com.chorereminder.ui.TaskIconBadge
 import com.chorereminder.ui.formatDate
+import com.chorereminder.ui.formatDelayedUntil
 import com.chorereminder.ui.formatDueLabel
 import com.chorereminder.ui.formatEarlyCompletionMessage
+import java.time.Instant
 import com.chorereminder.ui.theme.glassCardTint
 import com.chorereminder.ui.theme.glassPanel
 import com.chorereminder.ui.theme.glassSource
 import com.chorereminder.ui.theme.glassTint
 import dev.chrisbanes.haze.rememberHazeState
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.emptyFlow
 import java.time.LocalDate
 
 /**
@@ -54,10 +60,16 @@ fun CompleteScreen(
     viewModel: CompleteViewModel,
     onFinished: () -> Unit,
     onDismiss: () -> Unit,
+    /** Task ids from the notification's Delay... action -- opens straight to the picker. */
+    autoOpenDelayForTaskId: Flow<Long> = emptyFlow(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val hazeState = rememberHazeState()
     val today by viewModel.today.collectAsStateWithLifecycle()
+    var openDelayFromNotification by remember { mutableStateOf(false) }
+    LaunchedEffect(autoOpenDelayForTaskId) {
+        autoOpenDelayForTaskId.collect { openDelayFromNotification = true }
+    }
 
     Box(
         modifier = Modifier
@@ -88,6 +100,13 @@ fun CompleteScreen(
             is CompleteUiState.Ready -> {
                 val view = s.task
                 var confirmEarly by remember(view.task.id) { mutableStateOf(false) }
+                var showDelaySheet by remember(view.task.id) { mutableStateOf(false) }
+                LaunchedEffect(openDelayFromNotification) {
+                    if (openDelayFromNotification) {
+                        showDelaySheet = true
+                        openDelayFromNotification = false
+                    }
+                }
                 ConfirmCard(hazeState) {
                     TaskIconBadge(
                         iconType = view.task.iconType,
@@ -104,8 +123,10 @@ fun CompleteScreen(
                         textAlign = TextAlign.Center,
                     )
                     Spacer(Modifier.height(4.dp))
+                    val delayed = view.delayedUntil?.takeIf { it.isAfter(Instant.now()) }
                     Text(
-                        text = formatDueLabel(view.nextDue, view.dueState, today),
+                        text = delayed?.let { formatDelayedUntil(it, today) }
+                            ?: formatDueLabel(view.nextDue, view.dueState, today),
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -141,8 +162,25 @@ fun CompleteScreen(
                     ) {
                         Text("Mark Complete", style = MaterialTheme.typography.titleMedium)
                     }
+                    TextButton(
+                        onClick = { showDelaySheet = true },
+                        enabled = !s.saving,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Delay…")
+                    }
                     TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                         Text("Not yet")
+                    }
+
+                    if (showDelaySheet) {
+                        DelaySheet(
+                            onSelect = { option ->
+                                showDelaySheet = false
+                                viewModel.delay(option, onFinished)
+                            },
+                            onDismiss = { showDelaySheet = false },
+                        )
                     }
 
                     if (confirmEarly) {

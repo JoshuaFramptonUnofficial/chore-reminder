@@ -23,16 +23,20 @@ object Notifications {
     const val EXTRA_TASK_ID = "com.chorereminder.extra.TASK_ID"
     const val EXTRA_COMPLETION_ID = "com.chorereminder.extra.COMPLETION_ID"
     const val EXTRA_GENERATION = "com.chorereminder.extra.GENERATION"
+    /** Set on the content intent for the Delay action, so the app opens straight to the picker. */
+    const val EXTRA_OPEN_DELAY = "com.chorereminder.extra.OPEN_DELAY"
 
     const val ACTION_COMPLETE = "com.chorereminder.action.COMPLETE"
 
     /**
      * PendingIntent identity ignores extras, so every task needs its own request
-     * code or they all collapse onto the last-scheduled task. Content tap and the
-     * action button also need distinct codes from each other.
+     * code or they all collapse onto the last-scheduled task. Content tap and each
+     * action button also need distinct codes from each other. Spaced by 4 so a
+     * fourth action (e.g. Skip) can be added later without renumbering these.
      */
-    private fun contentRequestCode(taskId: Long) = taskId.toInt() * 2
-    private fun actionRequestCode(taskId: Long) = taskId.toInt() * 2 + 1
+    private fun contentRequestCode(taskId: Long) = taskId.toInt() * 4
+    private fun actionRequestCode(taskId: Long) = taskId.toInt() * 4 + 1
+    private fun delayRequestCode(taskId: Long) = taskId.toInt() * 4 + 2
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -93,6 +97,21 @@ object Notifications {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
 
+        // "Delay..." needs a duration picker, so it opens the app rather than
+        // acting in the background the way Mark Complete does.
+        val delayIntent = Intent(context, MainActivity::class.java).apply {
+            action = Intent.ACTION_VIEW
+            putExtra(EXTRA_TASK_ID, taskId)
+            putExtra(EXTRA_OPEN_DELAY, true)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+        }
+        val delayPending = PendingIntent.getActivity(
+            context,
+            delayRequestCode(taskId),
+            delayIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
+        )
+
         val emoji = if (view.task.iconType == IconType.EMOJI) "${view.task.iconValue} " else ""
         val title = "$emoji${view.task.name}"
         val body = when {
@@ -111,6 +130,7 @@ object Notifications {
             .setCategory(NotificationCompat.CATEGORY_REMINDER)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .addAction(0, "Mark Complete", completePending)
+            .addAction(0, "Delay…", delayPending)
             .build()
 
         try {

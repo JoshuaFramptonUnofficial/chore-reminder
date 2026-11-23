@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.chorereminder.AppContainer
 import com.chorereminder.data.TaskView
+import com.chorereminder.domain.DelayOption
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -43,6 +44,16 @@ class CompleteViewModel(
         _state.value = current.copy(saving = true)
         viewModelScope.launch {
             container.completeTask(taskId, current.task.occurrenceRevision)
+            onFinished()
+        }
+    }
+
+    fun delay(option: DelayOption, onFinished: () -> Unit) {
+        val current = _state.value
+        if (current !is CompleteUiState.Ready || current.saving) return
+        _state.value = current.copy(saving = true)
+        viewModelScope.launch {
+            container.delayTask(taskId, current.task.occurrenceRevision, option)
             onFinished()
         }
     }

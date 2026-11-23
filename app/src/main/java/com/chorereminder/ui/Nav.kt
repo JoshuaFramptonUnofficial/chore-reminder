@@ -54,6 +54,8 @@ fun ChoreNavHost(
      * already open still navigates.
      */
     notificationTaskIds: Flow<Long>,
+    /** Task ids from the notification's Delay... action specifically -- opens straight to the picker. */
+    notificationDelayTaskIds: Flow<Long> = kotlinx.coroutines.flow.emptyFlow(),
     navController: NavHostController = rememberNavController(),
 ) {
     LaunchedEffect(notificationTaskIds) {
@@ -148,7 +150,12 @@ fun ChoreNavHost(
                     navController.navigate(Routes.HOME) { launchSingleTop = true }
                 }
             }
-            CompleteScreen(viewModel = vm, onFinished = leave, onDismiss = leave)
+            CompleteScreen(
+                viewModel = vm,
+                onFinished = leave,
+                onDismiss = leave,
+                autoOpenDelayForTaskId = notificationDelayTaskIds,
+            )
         }
     }
     }
