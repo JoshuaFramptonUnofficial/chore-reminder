@@ -91,6 +91,9 @@ dependencies {
     implementation(libs.backdrop)
     implementation(libs.kyant.shapes)
 
+    implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.glance.material3)
+
     testImplementation(libs.junit)
     testImplementation(libs.androidx.work.testing)
     testImplementation(libs.robolectric)

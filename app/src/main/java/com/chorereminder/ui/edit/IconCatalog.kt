@@ -220,6 +220,13 @@ fun iconForKey(key: String): ImageVector {
     }
 }
 
+/**
+ * Same resolution as [iconForKey], but as a plain drawable resource id -- for
+ * surfaces outside Compose's `ImageVector` world (Glance's `ImageProvider`).
+ */
+@DrawableRes
+fun iconResForKey(key: String): Int = ICONS_BY_KEY[resolveKey(key)]?.res ?: R.drawable.ic_chore_check_circle
+
 fun searchIcons(query: String): List<IconGroup> {
     val q = query.trim().lowercase()
     if (q.isEmpty()) return ICON_GROUPS
