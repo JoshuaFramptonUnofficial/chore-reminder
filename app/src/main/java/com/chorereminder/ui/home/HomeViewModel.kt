@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.chorereminder.AppContainer
 import com.chorereminder.data.CategoryGroup
 import com.chorereminder.data.TaskView
+import com.chorereminder.domain.DelayOption
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.stateIn
@@ -39,6 +40,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
 
     fun delete(taskId: Long) {
         viewModelScope.launch { container.deleteTask(taskId) }
+    }
+
+    fun delay(task: TaskView, option: DelayOption) {
+        viewModelScope.launch { container.delayTask(task.task.id, task.occurrenceRevision, option) }
     }
 
     companion object {

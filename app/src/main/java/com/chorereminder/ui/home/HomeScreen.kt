@@ -5,7 +5,9 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -39,10 +41,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxState
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.runtime.SideEffect
@@ -67,15 +73,17 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chorereminder.data.CategoryGroup
 import com.chorereminder.data.TaskView
+import com.chorereminder.domain.DelayOption
 import com.chorereminder.domain.DueState
 import com.chorereminder.domain.nextDueDate
+import com.chorereminder.ui.DelaySheet
 import com.chorereminder.ui.TaskIconBadge
+import com.chorereminder.ui.formatDelayedUntil
 import com.chorereminder.ui.formatDueLabel
 import com.chorereminder.ui.formatEarlyCompletionMessage
 import com.chorereminder.ui.formatRecurrence
 import com.chorereminder.ui.theme.LiquidIconButton
 import com.chorereminder.ui.theme.LiquidPillButton
-import com.chorereminder.ui.theme.bouncyClickable
 import com.chorereminder.ui.theme.glassCard
 import com.chorereminder.ui.theme.glassCardTint
 import com.chorereminder.ui.theme.glassPanel
@@ -85,6 +93,7 @@ import com.chorereminder.ui.theme.rememberPressScale
 import com.kyant.backdrop.backdrops.layerBackdrop
 import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import dev.chrisbanes.haze.rememberHazeState
+import java.time.Instant
 import java.time.LocalDate
 
 /**
@@ -131,6 +140,7 @@ fun HomeScreen(
     val today by viewModel.today.collectAsStateWithLifecycle()
     val includeHidden by viewModel.includeHidden.collectAsStateWithLifecycle()
     var pendingEarlyComplete by remember { mutableStateOf<TaskView?>(null) }
+    var pendingDelay by remember { mutableStateOf<TaskView?>(null) }
 
     Scaffold(
         topBar = {
@@ -215,6 +225,7 @@ fun HomeScreen(
                                 viewModel.complete(task)
                             }
                         },
+                        onDelay = { pendingDelay = task },
                         // Completing a task re-sorts the list; animate the move
                         // instead of letting rows jump.
                         modifier = Modifier.animateItem(),
@@ -236,6 +247,16 @@ fun HomeScreen(
                 pendingEarlyComplete = null
             },
             onDismiss = { pendingEarlyComplete = null },
+        )
+    }
+
+    pendingDelay?.let { task ->
+        DelaySheet(
+            onSelect = { option ->
+                viewModel.delay(task, option)
+                pendingDelay = null
+            },
+            onDismiss = { pendingDelay = null },
         )
     }
 }
@@ -283,7 +304,9 @@ private fun EarlyCompletionDialog(
 
 @Composable
 private fun CategoryHeader(group: CategoryGroup, modifier: Modifier = Modifier) {
-    val overdue = group.tasks.count { it.dueState == DueState.OVERDUE }
+    // A delayed chore was silenced on purpose, so it shouldn't still read as
+    // something the user is neglecting.
+    val overdue = group.tasks.count { it.dueState == DueState.OVERDUE && !it.isCurrentlyDelayed() }
     Row(
         modifier = modifier.fillMaxWidth().padding(top = 12.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -306,23 +329,32 @@ private fun CategoryHeader(group: CategoryGroup, modifier: Modifier = Modifier) 
     }
 }
 
+/** Whether [TaskView.delayedUntil] is set and hasn't lapsed yet. */
+private fun TaskView.isCurrentlyDelayed(): Boolean = delayedUntil?.isAfter(Instant.now()) == true
+
 /**
- * A single chore. Tapping opens detail; the trailing button marks complete
- * in place (FR-14). Overdue cards get an error-toned border and label (FR-13).
+ * A single chore. Tapping opens detail; the trailing button marks complete in
+ * place (FR-14). Overdue cards get an error-toned border and label (FR-13); a
+ * delayed card is tertiary-toned instead, whatever its underlying due state.
+ * Swiping left or long-pressing opens the delay picker.
  */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TaskCard(
     task: TaskView,
     today: LocalDate,
     onClick: () -> Unit,
     onComplete: () -> Unit,
+    onDelay: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val isOverdue = task.dueState == DueState.OVERDUE
     val isDueToday = task.dueState == DueState.DUE_TODAY
+    val isDelayed = task.isCurrentlyDelayed()
 
     val accent by animateColorAsState(
         targetValue = when {
+            isDelayed -> MaterialTheme.colorScheme.tertiary
             isOverdue -> MaterialTheme.colorScheme.error
             isDueToday -> MaterialTheme.colorScheme.primary
             else -> MaterialTheme.colorScheme.onSurfaceVariant
@@ -332,76 +364,120 @@ private fun TaskCard(
     )
     val shape = RoundedCornerShape(20.dp)
 
-    Box(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(shape)
-            .glassCard(shape)
-            .then(
-                if (isOverdue) {
-                    Modifier.border(1.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.7f), shape)
-                } else {
-                    Modifier
-                }
-            )
-            .bouncyClickable(pressedScale = 0.97f, onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) onDelay()
+            // This is an action trigger, not a real dismiss -- the row always
+            // springs back, whether or not the swipe reached the threshold.
+            false
+        },
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        modifier = modifier.fillMaxWidth(),
+        enableDismissFromStartToEnd = false,
+        backgroundContent = { DelaySwipeBackground(shape) },
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TaskIconBadge(
-                iconType = task.task.iconType,
-                iconValue = task.task.iconValue,
-                containerColor = if (isOverdue) {
-                    MaterialTheme.colorScheme.errorContainer
-                } else {
-                    MaterialTheme.colorScheme.primaryContainer
-                },
-                contentColor = if (isOverdue) {
-                    MaterialTheme.colorScheme.onErrorContainer
-                } else {
-                    MaterialTheme.colorScheme.onPrimaryContainer
-                },
-            )
-            Spacer(Modifier.width(12.dp))
+        val interactionSource = remember { MutableInteractionSource() }
+        val scale by rememberPressScale(interactionSource, pressedScale = 0.97f)
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .graphicsLayer { scaleX = scale; scaleY = scale }
+                .clip(shape)
+                .glassCard(shape)
+                .then(
+                    when {
+                        isDelayed -> Modifier.border(1.5.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.7f), shape)
+                        isOverdue -> Modifier.border(1.5.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.7f), shape)
+                        else -> Modifier
+                    },
+                )
+                .combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = null,
+                    onClick = onClick,
+                    onLongClick = onDelay,
+                )
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TaskIconBadge(
+                    iconType = task.task.iconType,
+                    iconValue = task.task.iconValue,
+                    containerColor = if (isOverdue) {
+                        MaterialTheme.colorScheme.errorContainer
+                    } else {
+                        MaterialTheme.colorScheme.primaryContainer
+                    },
+                    contentColor = if (isOverdue) {
+                        MaterialTheme.colorScheme.onErrorContainer
+                    } else {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    },
+                )
+                Spacer(Modifier.width(12.dp))
 
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = task.task.name,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = if (isOverdue) FontWeight.Bold else FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurface,
-                )
-                Text(
-                    text = formatDueLabel(task.nextDue, task.dueState, today),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = accent,
-                    fontWeight = if (task.dueState.isActionable) FontWeight.Medium else FontWeight.Normal,
-                )
-                Text(
-                    text = formatRecurrence(task.task.recurrence),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = task.task.name,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = if (isOverdue) FontWeight.Bold else FontWeight.Medium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = task.delayedUntil?.takeIf { isDelayed }?.let { formatDelayedUntil(it, today) }
+                            ?: formatDueLabel(task.nextDue, task.dueState, today),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = accent,
+                        fontWeight = if (task.dueState.isActionable || isDelayed) FontWeight.Medium else FontWeight.Normal,
+                    )
+                    Text(
+                        text = formatRecurrence(task.task.recurrence),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
 
-            Spacer(Modifier.width(8.dp))
-            val completeInteractionSource = remember { MutableInteractionSource() }
-            val completeScale by rememberPressScale(completeInteractionSource, pressedScale = 0.8f)
-            FilledTonalIconButton(
-                onClick = onComplete,
-                interactionSource = completeInteractionSource,
-                modifier = Modifier.graphicsLayer { scaleX = completeScale; scaleY = completeScale },
-                colors = IconButtonDefaults.filledTonalIconButtonColors(
-                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                ),
-            ) {
-                Icon(
-                    Icons.Filled.CheckCircle,
-                    contentDescription = "Mark ${task.task.name} complete",
-                )
+                Spacer(Modifier.width(8.dp))
+                val completeInteractionSource = remember { MutableInteractionSource() }
+                val completeScale by rememberPressScale(completeInteractionSource, pressedScale = 0.8f)
+                FilledTonalIconButton(
+                    onClick = onComplete,
+                    interactionSource = completeInteractionSource,
+                    modifier = Modifier.graphicsLayer { scaleX = completeScale; scaleY = completeScale },
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                    ),
+                ) {
+                    Icon(
+                        Icons.Filled.CheckCircle,
+                        contentDescription = "Mark ${task.task.name} complete",
+                    )
+                }
             }
         }
+    }
+}
+
+@Composable
+private fun DelaySwipeBackground(shape: RoundedCornerShape) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.tertiaryContainer)
+            .padding(horizontal = 20.dp),
+        contentAlignment = Alignment.CenterEnd,
+    ) {
+        Text(
+            "Delay",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.Medium,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+        )
     }
 }
 
