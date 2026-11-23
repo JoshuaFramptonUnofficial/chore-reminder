@@ -16,6 +16,7 @@ haze = "2.0.1"
 backdrop = "2.0.1"
 kyantShapes = "1.2.1"
 junit = "4.13.2"
+robolectric = "4.17"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -54,6 +55,8 @@ backdrop = { group = "io.github.kyant0", name = "backdrop", version.ref = "backd
 kyant-shapes = { group = "io.github.kyant0", name = "shapes", version.ref = "kyantShapes" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
+androidx-work-testing = { group = "androidx.work", name = "work-testing", version.ref = "work" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

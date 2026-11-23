@@ -4,7 +4,9 @@ import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.chorereminder.ChoreApp
-import com.chorereminder.domain.DueState
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.withLock
 import java.time.ZonedDateTime
 
 /**
@@ -24,24 +26,28 @@ class ReminderWorker(
         if (taskId <= 0L) return Result.failure()
 
         val container = (applicationContext as ChoreApp).container
-        val view = container.repository.getTask(taskId)
-            // Task was deleted while the work was pending -- stop the loop.
-            ?: return Result.success()
+        return container.reminderMutex.withLock {
+            val view = container.repository.getTask(taskId)
+                // Task was deleted while the work was pending -- stop the loop.
+                ?: return@withLock Result.success()
 
-        if (view.dueState.isActionable) {
-            Notifications.post(applicationContext, view)
+            val now = ZonedDateTime.now()
+            val lastNotifiedOn = container.reminderHistory.lastNotifiedOn(taskId)
+            currentCoroutineContext().ensureActive()
+            if (ReminderTiming.shouldNotify(view.nextDue, now, lastNotifiedOn) &&
+                Notifications.post(applicationContext, view, container.reminderHistory.generation())
+            ) {
+                container.reminderHistory.markNotified(taskId, now.toLocalDate())
+            }
+
+            // Persist the successor before reporting success, without cancelling
+            // this running worker. Denied notifications still wait for the next slot.
+            ReminderScheduler.scheduleNext(applicationContext, view, ZonedDateTime.now())
+            Result.success()
         }
-
-        // Re-arm: tomorrow for a still-outstanding task, or the real next due date
-        // for one that isn't due yet.
-        ReminderScheduler.schedule(applicationContext, view, ZonedDateTime.now())
-        return Result.success()
     }
 
     companion object {
         const val KEY_TASK_ID = "taskId"
     }
 }
-
-/** Convenience for readability at call sites. */
-internal val DueState.isDueOrOverdue: Boolean get() = isActionable

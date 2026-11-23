@@ -26,20 +26,28 @@ Picking an icon for a chore doesn't mean scrolling through a dozen icons that ha
 
 <img src="docs/media/screenshot-recurrence.png" width="220" align="right" />
 
-The part I spent the most time getting right is recurrence, because chores don't all repeat the same way. Watering the plants should reschedule from whenever you actually got to it — every 3 days from today, not from some grid. Rent is different: it's due on the 15th no matter whether you paid early or late. So there are two modes:
+The part I spent the most time getting right is recurrence, because chores don't all repeat the same way. Watering the plants should reschedule from whenever you actually got to it — every 3 days from today, not from some grid. Rent is different: it's due on the 15th no matter whether you paid early or late. There are four options:
 
 - **Relative** — next due date is completion date plus the interval. Forgiving if you're late.
-- **Fixed** — anchored to a date or weekday, regardless of when you complete it.
+- **Fixed interval** — anchored to a date, regardless of when you complete it.
+- **Weekday** — repeats on the same day each week.
+- **One-off** — due once, with no repeat.
+
+Completing a fixed occurrence early advances to the following scheduled occurrence. The original schedule stays intact, including month-end dates. Completing a relative chore early or late counts its next interval from the day you actually finished.
+
+Upcoming chores can appear immediately, a chosen time after completion, or a chosen time before their next due date. Set a default in Settings and override it for individual chores. Due and overdue chores always remain visible; the eye button lets you reveal hidden upcoming chores whenever you need to edit them.
+
+Completing a chore shows a short **Task completed / Undo** confirmation. Undo restores that specific occurrence, including one-off chores. The list keeps your scroll position by default, with an option in Settings to follow the completed chore instead.
 
 <br clear="right"/>
 
 <img src="docs/media/screenshot-settings.png" width="220" align="left" />
 
-Settings has an export/import pair instead of an account system. Export writes every chore, category, and completion to one JSON file you control; import reads it back. That's it, that's the whole backup story, and it's really just for the day you get a new phone.
+Settings groups appearance, chore behaviour, categories, notifications and backups in one place. Export writes every chore, category, completion and visibility rule to a JSON file you control. Import confirms before replacing your current data. Older backup files remain readable; appearance and scrolling preferences stay local to the device.
 
-When something's due, you get a notification with a one-tap complete action right on it, so you don't have to open the app at all. Leave it alone and it'll remind you again the next day instead of getting lost in the tray.
+When something's due, you get a notification with a one-tap complete action right on it, so you don't have to open the app at all. Leave it incomplete and it will remind you again each day. Reminders target 09:00 local time, with delivery subject to notification permissions and Android's background scheduling.
 
-The color scheme follows your wallpaper on Android 12+, it respects system light/dark mode, and the surfaces that benefit from a bit of blur — the top bar, the add-chore button — get it. I kept it off the scrolling list itself, since blurring something that's constantly moving just makes it harder to read.
+The color scheme follows your wallpaper on Android 12+ and respects system light/dark mode. Buttons and confirmation dialogs use Liquid Glass, with adjustable blur and a live sample in Settings. The scrolling header uses a separate progressive backdrop blur; chore cards keep a simpler translucent surface for readability.
 
 <br clear="left"/>
 
@@ -47,33 +55,33 @@ The color scheme follows your wallpaper on Android 12+, it respects system light
 
 <table>
 <tr>
-<td><img src="docs/media/demo-complete-chore.gif" width="240"/><br/><sub>Marking an overdue chore complete — the card re-sorts and the due date rolls forward</sub></td>
-<td><img src="docs/media/demo-new-chore-fab.gif" width="240"/><br/><sub>The liquid-glass FAB opening into the new-chore flow</sub></td>
+<td><img src="docs/media/demo-complete-chore.gif" width="240"/><br/><sub>Completing an overdue chore and advancing its due date</sub></td>
+<td><img src="docs/media/demo-new-chore-fab.gif" width="240"/><br/><sub>Opening the new-chore form from the glass action button</sub></td>
 <td><img src="docs/media/demo-scroll-home.gif" width="240"/><br/><sub>Scrolling through categories on the home screen</sub></td>
 </tr>
 </table>
 
 ## Offline, for real
 
-Check the manifest and there's one permission: `POST_NOTIFICATIONS`. No `INTERNET`, no account, nothing phoning home. That's not an oversight I forgot to fix — the whole point of this app was getting chores off a cloud-synced to-do list and onto a device that doesn't care if it has signal.
+The app does not request `INTERNET`. It uses Android notifications and background work, with no app account or backend. That's not an oversight I forgot to fix — the whole point of this app was getting chores off a cloud-synced to-do list and onto a device that doesn't care if it has signal.
 
 ## Built with
 
-Kotlin and Jetpack Compose (Material 3), with an MVVM setup and a small repository layer in between. Room handles storage, WorkManager fires the reminders, DataStore holds preferences, and kotlinx.serialization writes the backup JSON. The frosted-glass bits use [Haze](https://github.com/chrisbanes/haze) for the blur and [Kyant0's backdrop/shapes libraries](https://github.com/Kyant0/AndroidLiquidGlass) for the liquid-glass refraction on the add-chore button.
+Kotlin and Jetpack Compose (Material 3), with an MVVM setup and a small repository layer in between. Room handles storage, WorkManager fires the reminders, DataStore holds preferences, and kotlinx.serialization writes the backup JSON. The frosted-glass bits use [Haze](https://github.com/chrisbanes/haze) for the blur and [Kyant0's backdrop/shapes libraries](https://github.com/Kyant0/AndroidLiquidGlass) for the liquid-glass refraction on buttons and confirmation dialogs.
 
-The recurrence math lives in its own pure-Kotlin module with no Android dependencies at all, which made it easy to throw a real test suite at it — interval math, month-end clamping (Jan 31 rolls to Feb 28, then recovers to Mar 31), leap years, the due/overdue boundary.
+The recurrence math lives in an Android-free Kotlin package within the app module, which made it easy to throw a real test suite at it — interval math, month-end clamping (Jan 31 rolls to Feb 28, then recovers to Mar 31), leap years, the due/overdue boundary.
 
 There's no DI framework. It's four screens and a hand-rolled container in `ChoreApp.kt` does the job without pulling in Hilt for something this size.
 
 ## Running it
 
-You'll need Android Studio with the SDK for Android 12 (minSdk 31 — that's the minimum for dynamic color).
+Use Android Studio with Android SDK platform 37 and a Java 17 toolchain. The app runs on Android 12 or later (minSdk 31).
 
 ```bash
 ./gradlew :app:installDebug
 ```
 
-Release builds are signed with the debug key on purpose. This isn't going on the Play Store, so the only thing that matters is being able to drop the APK on my phone and install it.
+Local release builds are signed with the debug key on purpose. This isn't going on the Play Store, so the only thing that matters is being able to drop the APK on my phone and install it.
 
 ## What's not here
 

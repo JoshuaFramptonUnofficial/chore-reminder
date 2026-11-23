@@ -8,8 +8,8 @@ import androidx.room.TypeConverters
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [CategoryEntity::class, TaskEntity::class, CompletionEntity::class],
-    version = 1,
+    entities = [CategoryEntity::class, TaskEntity::class, CompletionEntity::class, VisibilitySettingsEntity::class],
+    version = 4,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -18,6 +18,28 @@ abstract class ChoreDatabase : RoomDatabase() {
     abstract fun choreDao(): ChoreDao
 
     companion object {
+        val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tasks ADD COLUMN completionRevision INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        val MIGRATION_2_3 = object : androidx.room.migration.Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE tasks ADD COLUMN visibility_mode TEXT")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN visibility_amount INTEGER")
+                db.execSQL("ALTER TABLE tasks ADD COLUMN visibility_unit TEXT")
+                db.execSQL("CREATE TABLE IF NOT EXISTS visibility_settings (id INTEGER NOT NULL PRIMARY KEY, mode TEXT NOT NULL, amount INTEGER NOT NULL, unit TEXT NOT NULL)")
+            }
+        }
+
+        val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE completions ADD COLUMN scheduledDue INTEGER")
+                db.execSQL("ALTER TABLE completions ADD COLUMN scheduleKey TEXT")
+            }
+        }
+
         @Volatile
         private var instance: ChoreDatabase? = null
 
@@ -27,6 +49,7 @@ abstract class ChoreDatabase : RoomDatabase() {
 
         private fun build(context: Context): ChoreDatabase =
             Room.databaseBuilder(context, ChoreDatabase::class.java, "chores.db")
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .addCallback(object : Callback() {
                     override fun onCreate(db: SupportSQLiteDatabase) {
                         // FR-12: a default category must always exist so a task can

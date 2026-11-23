@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
@@ -20,6 +21,9 @@ object Notifications {
     const val CHANNEL_ID = "chore_reminders"
 
     const val EXTRA_TASK_ID = "com.chorereminder.extra.TASK_ID"
+    const val EXTRA_COMPLETION_ID = "com.chorereminder.extra.COMPLETION_ID"
+    const val EXTRA_GENERATION = "com.chorereminder.extra.GENERATION"
+
     const val ACTION_COMPLETE = "com.chorereminder.action.COMPLETE"
 
     /**
@@ -46,16 +50,18 @@ object Notifications {
 
     /** The I/O matrix requires checking this before posting (FR: notifications denied). */
     fun canPost(context: Context): Boolean {
-        val granted = ContextCompat.checkSelfPermission(
+        val granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.POST_NOTIFICATIONS,
         ) == PackageManager.PERMISSION_GRANTED
-        return granted && NotificationManagerCompat.from(context).areNotificationsEnabled()
+        val channelEnabled = context.getSystemService(NotificationManager::class.java)
+            ?.getNotificationChannel(CHANNEL_ID)?.importance != NotificationManager.IMPORTANCE_NONE
+        return granted && channelEnabled && NotificationManagerCompat.from(context).areNotificationsEnabled()
     }
 
-    fun post(context: Context, view: TaskView) {
-        if (!canPost(context)) return
+    fun post(context: Context, view: TaskView, generation: String = "initial"): Boolean {
         ensureChannel(context)
+        if (!canPost(context)) return false
 
         val taskId = view.task.id
 
@@ -76,6 +82,8 @@ object Notifications {
         // are blocked on API 31+, and the receiver does the DB write itself.
         val completeIntent = Intent(context, CompleteActionReceiver::class.java).apply {
             action = ACTION_COMPLETE
+            putExtra(EXTRA_COMPLETION_ID, view.occurrenceRevision)
+            putExtra(EXTRA_GENERATION, generation)
             putExtra(EXTRA_TASK_ID, taskId)
         }
         val completePending = PendingIntent.getBroadcast(
@@ -107,10 +115,14 @@ object Notifications {
 
         try {
             NotificationManagerCompat.from(context).notify(view.task.notificationId, notification)
+            return true
         } catch (_: SecurityException) {
             // Permission revoked between the check and the post -- nothing to do.
+            return false
         }
     }
+
+    fun cancelAll(context: Context) { NotificationManagerCompat.from(context).cancelAll() }
 
     fun cancel(context: Context, taskId: Long) {
         NotificationManagerCompat.from(context).cancel(taskId.toInt())

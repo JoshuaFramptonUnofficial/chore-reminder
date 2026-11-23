@@ -19,6 +19,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.compositionLocalOf
+import com.chorereminder.data.UiPreferences
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -28,6 +30,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.composed
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.runtime.setValue
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
@@ -51,6 +56,9 @@ import dev.chrisbanes.haze.blur.hazeBlur
  * never a full-screen layer over a scrolling list, which would re-capture the
  * layer every frame.
  */
+
+/** One shared, device-local blur radius for all Liquid Glass, separate from Haze. */
+val LocalLiquidGlassBlur = compositionLocalOf { UiPreferences.DEFAULT_GLASS_BLUR.dp }
 
 /** Mark the content that should show *through* the glass. */
 fun Modifier.glassSource(state: HazeState): Modifier = hazeSource(state)
@@ -124,32 +132,23 @@ fun LiquidPillButton(
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
     tint: Color = MaterialTheme.colorScheme.primary,
+    enabled: Boolean = true,
     content: @Composable RowScope.() -> Unit,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.94f else 1f,
+        targetValue = if (pressed && enabled) 0.94f else 1f,
         animationSpec = spring(dampingRatio = 0.5f, stiffness = 300f),
         label = "liquid-pill-scale",
     )
 
     Row(
         modifier
-            .graphicsLayer { scaleX = scale; scaleY = scale }
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { Capsule() },
-                effects = {
-                    vibrancy()
-                    blur(2.dp.toPx())
-                    lens(12.dp.toPx(), 24.dp.toPx())
-                },
-                onDrawSurface = {
-                    drawRect(tint.copy(alpha = 0.22f))
-                },
-            )
+            .graphicsLayer { scaleX = scale; scaleY = scale; alpha = if (enabled) 1f else 0.5f }
+            .liquidPillSurface(backdrop, tint)
             .clickable(
+                enabled = enabled,
                 interactionSource = interactionSource,
                 indication = null,
                 role = Role.Button,
@@ -192,18 +191,7 @@ fun LiquidIconButton(
         modifier
             .graphicsLayer { scaleX = scale; scaleY = scale }
             .size(diameter)
-            .drawBackdrop(
-                backdrop = backdrop,
-                shape = { Capsule() },
-                effects = {
-                    vibrancy()
-                    blur(2.dp.toPx())
-                    lens(8.dp.toPx(), 16.dp.toPx())
-                },
-                onDrawSurface = {
-                    drawRect(tint.copy(alpha = 0.22f))
-                },
-            )
+            .liquidPillSurface(backdrop, tint)
             .clickable(
                 interactionSource = interactionSource,
                 indication = null,
@@ -213,4 +201,38 @@ fun LiquidIconButton(
         contentAlignment = Alignment.Center,
         content = { content() },
     )
+}
+
+/** Shared captured-backdrop treatment for capsule actions and confirmation bars. */
+@Composable
+fun Modifier.liquidPillSurface(backdrop: Backdrop, tint: Color): Modifier =
+    liquidSurface(backdrop, { Capsule() }, tint.copy(alpha = 0.22f))
+
+@Composable
+fun Modifier.liquidSurface(backdrop: Backdrop, shape: () -> Shape, tint: Color, radius: Dp = LocalLiquidGlassBlur.current): Modifier =
+    drawBackdrop(backdrop = backdrop, shape = shape,
+        effects = { vibrancy(); blur(radius.toPx()); lens(8.dp.toPx(), 16.dp.toPx()) },
+        onDrawSurface = { drawRect(tint) })
+
+/** Full-resolution progressive backdrop blur; no lens, vibrancy or noise. */
+@Composable
+fun Modifier.progressiveHeader(state: HazeState): Modifier = composed {
+    var height by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val ramp = with(density) { 56.dp.toPx() }
+    val tint = MaterialTheme.colorScheme.surface
+    this.onSizeChanged { height = it.height }
+        .hazeBlur(input = HazeInput.Sources(state),
+            performanceMode = dev.chrisbanes.haze.HazePerformanceMode.Quality,
+            style = HazeBlurStyle {
+                blurRadius(24.dp)
+                backgroundColor(tint)
+                noiseFactor(0f)
+                colorEffects(emptyList())
+                progressive(dev.chrisbanes.haze.HazeProgressive.verticalGradient(
+                    easing = androidx.compose.animation.core.FastOutSlowInEasing,
+                    startY = (height - ramp).coerceAtLeast(0f), endY = height.toFloat().coerceAtLeast(1f),
+                    startIntensity = 1f, endIntensity = 0f))
+                mask(Brush.verticalGradient(0f to Color.Black, 0.5f to Color.Black, 1f to Color.Transparent))
+            })
 }

@@ -20,7 +20,10 @@ class CompleteTaskWorker(
         if (taskId <= 0L) return Result.failure()
 
         val container = (applicationContext as ChoreApp).container
-        container.completeTask(taskId)
+        val expected = inputData.getLong(Notifications.EXTRA_COMPLETION_ID, -1L)
+        val generation = inputData.getString(Notifications.EXTRA_GENERATION) ?: return Result.success()
+        if (expected < 0) return Result.success()
+        container.completeTask(taskId, expected, generation)
         return Result.success()
     }
 

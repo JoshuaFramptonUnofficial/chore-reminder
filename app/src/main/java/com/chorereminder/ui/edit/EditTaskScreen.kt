@@ -1,5 +1,12 @@
 package com.chorereminder.ui.edit
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
@@ -16,7 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
-import androidx.compose.material3.AlertDialog
+import com.chorereminder.ui.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.DatePicker
@@ -39,6 +46,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.painterResource
+import com.chorereminder.R
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -61,7 +70,7 @@ import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneOffset
 import java.time.format.TextStyle
-import java.util.Locale
+import androidx.compose.ui.platform.LocalLocale
 
 /** FR-1/FR-2/FR-4: create or edit a task. */
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
@@ -71,24 +80,37 @@ fun EditTaskScreen(
     onDone: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(state.finished) { if (state.finished) onDone() }
+    LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it) } }
+    val defaultVisibility by viewModel.defaultVisibility.collectAsStateWithLifecycle()
     val categories by viewModel.categories.collectAsStateWithLifecycle()
-    var confirmDelete by remember { mutableStateOf(false) }
+    var confirmDelete by rememberSaveable { mutableStateOf(false) }
+    var confirmDiscard by rememberSaveable { mutableStateOf(false) }
+    var nameTouched by rememberSaveable { mutableStateOf(false) }
+    val requestBack: () -> Unit = {
+        if (!state.busy) {
+            if (viewModel.hasUnsavedChanges) confirmDiscard = true else onDone()
+        }
+    }
+    BackHandler(onBack = requestBack)
     val hazeState = rememberHazeState()
     val pillBackdrop = rememberLayerBackdrop()
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             // Glass app bar to match Home/Complete: the form scrolls underneath.
             TopAppBar(
                 title = { Text(if (state.isEditing) "Edit chore" else "New chore") },
                 navigationIcon = {
-                    IconButton(onClick = onDone) {
+                    IconButton(onClick = requestBack, enabled = !state.busy) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
-                    if (state.isEditing) {
-                        IconButton(onClick = { confirmDelete = true }) {
+                    if (state.isEditing && !state.missing) {
+                        IconButton(onClick = { confirmDelete = true }, enabled = state.loaded && !state.busy) {
                             Icon(
                                 Icons.Filled.Delete,
                                 contentDescription = "Delete chore",
@@ -105,13 +127,17 @@ fun EditTaskScreen(
             )
         },
         floatingActionButton = {
-            if (state.canSave) {
+            if (!state.missing) {
                 LiquidPillButton(
-                    onClick = { viewModel.save(onDone) },
+                    onClick = viewModel::save,
                     backdrop = pillBackdrop,
+                    enabled = state.canSave,
                 ) {
+                    if (state.busy) CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                    else Icon(painterResource(R.drawable.ic_save), contentDescription = null)
                     Text(
-                        if (state.isEditing) "Save changes" else "Add chore",
+                        if (state.saving) "Saving..." else if (state.deleting) "Deleting..."
+                        else if (state.isEditing) "Save" else "Add chore",
                         fontWeight = FontWeight.Medium,
                     )
                 }
@@ -121,13 +147,25 @@ fun EditTaskScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
+                // Match Home: capture the whole viewport, including under Save.
+                // Insets belong to scrolling content, not the sampled layer's bounds.
+                // Keep capture outside verticalScroll so reflections track scrolling.
                 .glassSource(hazeState)
                 .layerBackdrop(pillBackdrop)
+                .verticalScroll(rememberScrollState())
+                .padding(padding)
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (!state.loaded) {
+                CircularProgressIndicator(Modifier.padding(24.dp))
+                return@Column
+            }
+            if (state.missing) {
+                Text("That chore no longer exists.", modifier = Modifier.padding(vertical = 24.dp))
+                TextButton(onClick = onDone) { Text("Back to chores") }
+                return@Column
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 TaskIconBadge(
                     iconType = state.iconType,
@@ -139,11 +177,12 @@ fun EditTaskScreen(
                 Spacer(Modifier.width(12.dp))
                 OutlinedTextField(
                     value = state.name,
-                    onValueChange = viewModel::setName,
+                    onValueChange = { nameTouched = true; viewModel.setName(it) },
                     label = { Text("Name") },
                     placeholder = { Text("Change bed sheets") },
                     singleLine = true,
-                    isError = state.name.isBlank(),
+                    isError = nameTouched && state.name.isBlank(),
+                    supportingText = { if (state.name.isBlank()) Text("Enter a chore name.") },
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -213,7 +252,7 @@ fun EditTaskScreen(
                     RecurrenceKind.FIXED_WEEKDAY ->
                         "Falls due on the same weekday every week."
                     RecurrenceKind.ONE_OFF ->
-                        "A single task -- marking it done removes it for good."
+                        "A single task -- mark it done once, with undo available."
                 },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -227,7 +266,7 @@ fun EditTaskScreen(
                                 selected = state.dayOfWeek == day,
                                 onClick = { viewModel.setDayOfWeek(day) },
                                 label = {
-                                    Text(day.getDisplayName(TextStyle.SHORT, Locale.getDefault()))
+                                    Text(day.getDisplayName(TextStyle.SHORT, LocalLocale.current.platformLocale))
                                 },
                             )
                         }
@@ -243,7 +282,7 @@ fun EditTaskScreen(
                 }
 
                 else -> {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
                         OutlinedTextField(
                             value = state.intervalText,
                             onValueChange = viewModel::setIntervalText,
@@ -252,7 +291,6 @@ fun EditTaskScreen(
                             isError = state.interval == null,
                             modifier = Modifier.width(110.dp),
                         )
-                        Spacer(Modifier.width(8.dp))
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                             IntervalUnit.entries.forEach { unit ->
                                 FilterChip(
@@ -274,19 +312,27 @@ fun EditTaskScreen(
                 }
             }
 
-            if (!state.canSave) {
-                Spacer(Modifier.height(16.dp))
-                // No valid recurrence/name yet -- a disabled flat button explains
-                // why there's nothing to tap, since the FAB only appears once the
-                // form is actually saveable.
-                Button(
-                    onClick = {},
-                    enabled = false,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (state.isEditing) "Save changes" else "Add chore") }
+            SectionLabel("Upcoming chore visibility")
+            Row {
+                FilterChip(selected = state.visibility == null, onClick = { viewModel.setVisibility(null) }, label = { Text("Default") })
+                Spacer(Modifier.width(8.dp))
+                FilterChip(selected = state.visibility != null, onClick = { if (state.visibility == null) viewModel.setVisibility(defaultVisibility) }, label = { Text("Custom") })
             }
+            state.visibility?.let { com.chorereminder.ui.VisibilityEditor(it, viewModel::setVisibility) }
+                ?: Text("Uses the default visibility rule in Settings.", style = MaterialTheme.typography.bodySmall)
+
             Spacer(Modifier.height(96.dp))
         }
+    }
+
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("Discard unsaved changes?") },
+            text = { Text("Your changes to this chore have not been saved.") },
+            confirmButton = { TextButton(onClick = { confirmDiscard = false; onDone() }) { Text("Discard") } },
+            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("Keep editing") } },
+        )
     }
 
     // FR-3: deletion requires a confirmation step.
@@ -300,7 +346,7 @@ fun EditTaskScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmDelete = false
-                    viewModel.delete(onDone)
+                    viewModel.delete()
                 }) {
                     Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
@@ -331,6 +377,7 @@ private fun RecurrenceKindChip(
  * "Today"-only assist chip so a fixed schedule's anchor -- or a one-off task's due
  * date -- can be set to any day, not just today.
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun DueDatePicker(
     label: String,
@@ -339,12 +386,11 @@ private fun DueDatePicker(
 ) {
     var showPicker by remember { mutableStateOf(false) }
 
-    Row(verticalAlignment = Alignment.CenterVertically) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), itemVerticalAlignment = Alignment.CenterVertically) {
         Text(
             "$label ${formatDate(date)}",
             style = MaterialTheme.typography.bodyMedium,
         )
-        Spacer(Modifier.width(8.dp))
         AssistChip(
             onClick = { showPicker = true },
             label = { Text("Change") },

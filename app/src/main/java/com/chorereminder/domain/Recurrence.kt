@@ -52,38 +52,54 @@ internal fun LocalDate.plus(count: Long, unit: IntervalUnit): LocalDate = when (
  *
  * @param createdDate the date the task was created -- the fallback reference point
  *   for a task that has never been completed.
- * @param lastCompletion the date of the most recent completion, or null if none.
+ * @param lastCompletion the actual local date of the latest inserted completion.
+ * @param completedOccurrence the scheduled due date consumed under this same rule;
+ *   null for legacy history. Only fixed rules use it.
  */
 fun nextDueDate(
     recurrence: Recurrence,
     createdDate: LocalDate,
     lastCompletion: LocalDate?,
-): LocalDate = when (recurrence) {
-    is Recurrence.Relative -> {
-        // Relative rules always measure from the last completion, falling back to
-        // the creation date. Interval is coerced to >= 1 so a corrupt 0 can never
-        // produce a due date that never advances.
-        val base = lastCompletion ?: createdDate
-        base.plus(recurrence.interval.coerceAtLeast(1).toLong(), recurrence.unit)
-    }
-
-    is Recurrence.FixedInterval -> nextFixedIntervalOccurrence(recurrence, lastCompletion)
-
-    is Recurrence.FixedWeekday -> {
-        if (lastCompletion == null) {
-            // Never completed: the next occurrence on or after creation, so a task
-            // created on its own weekday is due that same day.
-            nextOrSameWeekday(createdDate, recurrence.dayOfWeek)
-        } else {
-            // Completed: strictly after, so completing on Monday schedules the
-            // following Monday rather than re-arming today.
-            nextOrSameWeekday(lastCompletion.plusDays(1), recurrence.dayOfWeek)
+    completedOccurrence: LocalDate? = null,
+): LocalDate {
+    // A fixed rule consumes the displayed occurrence, even when completed early.
+    // Late completion still skips missed grid dates as in previous releases.
+    val fixedThrough = listOfNotNull(lastCompletion, completedOccurrence).maxOrNull()
+    return when (recurrence) {
+        is Recurrence.Relative -> {
+            // Relative rules always measure from the last completion, falling back to
+            // the creation date. Interval is coerced to >= 1 so a corrupt 0 can never
+            // produce a due date that never advances.
+            val base = lastCompletion ?: createdDate
+            base.plus(recurrence.interval.coerceAtLeast(1).toLong(), recurrence.unit)
         }
-    }
 
-    // A one-off task's due date never moves -- whether it's hidden after
-    // completion is decided by the caller, not by the date math.
-    is Recurrence.OneOff -> recurrence.dueDate
+        is Recurrence.FixedInterval -> nextFixedIntervalOccurrence(recurrence, fixedThrough)
+
+        is Recurrence.FixedWeekday -> {
+            if (fixedThrough == null) {
+                // Never completed: the next occurrence on or after creation, so a task
+                // created on its own weekday is due that same day.
+                nextOrSameWeekday(createdDate, recurrence.dayOfWeek)
+            } else {
+                // Completed: strictly after, so completing on Monday schedules the
+                // following Monday rather than re-arming today.
+                nextOrSameWeekday(fixedThrough.plusDays(1), recurrence.dayOfWeek)
+            }
+        }
+
+        // A one-off task's due date never moves -- whether it's hidden after
+        // completion is decided by the caller, not by the date math.
+        is Recurrence.OneOff -> recurrence.dueDate
+    }
+}
+
+/** Stable identity of the effective rule; old consumed dates never constrain an edited rule. */
+fun Recurrence.scheduleKey(): String = when (this) {
+    is Recurrence.Relative -> "relative:$interval:${unit.name}"
+    is Recurrence.FixedInterval -> "fixed:$anchor:$interval:${unit.name}"
+    is Recurrence.FixedWeekday -> "weekday:${dayOfWeek.name}"
+    is Recurrence.OneOff -> "once:$dueDate"
 }
 
 private fun nextOrSameWeekday(from: LocalDate, target: DayOfWeek): LocalDate {

@@ -15,14 +15,15 @@ import java.time.LocalDate
  */
 @Serializable
 data class BackupFile(
-    val version: Int = CURRENT_VERSION,
+    val version: Int = 1,
     val exportedAt: String,
     val categories: List<BackupCategory>,
     val tasks: List<BackupTask>,
     val completions: List<BackupCompletion>,
+    val defaultVisibility: VisibilitySpec = VisibilitySpec(),
 ) {
     companion object {
-        const val CURRENT_VERSION = 1
+        const val CURRENT_VERSION = 4
     }
 }
 
@@ -48,6 +49,8 @@ data class BackupTask(
     val anchor: String? = null,
     /** ISO-8601 day name, e.g. "MONDAY". */
     val dayOfWeek: String? = null,
+    val completionRevision: Long = 0,
+    val visibility: VisibilitySpec? = null,
 )
 
 @Serializable
@@ -57,6 +60,8 @@ data class BackupCompletion(
     /** ISO-8601 instant, e.g. "2026-10-05T09:30:00Z". */
     val completedAt: String,
     val completedOn: String,
+    val scheduledDue: String? = null,
+    val scheduleKey: String? = null,
 )
 
 // --- Mapping ------------------------------------------------------------------
@@ -77,6 +82,8 @@ fun TaskEntity.toBackup() = BackupTask(
     unit = recurrence.unit.name,
     anchor = recurrence.anchor?.toString(),
     dayOfWeek = recurrence.dayOfWeek?.name,
+    completionRevision = completionRevision,
+    visibility = visibility,
 )
 
 /** Throws on malformed input; callers parse inside a try so the import rolls back. */
@@ -87,6 +94,8 @@ fun BackupTask.toEntity() = TaskEntity(
     iconValue = iconValue,
     categoryId = categoryId,
     createdDate = LocalDate.parse(createdDate),
+    completionRevision = completionRevision,
+    visibility = visibility,
     recurrence = RecurrenceSpec(
         kind = RecurrenceKind.valueOf(recurrenceKind),
         interval = interval,
@@ -101,6 +110,8 @@ fun CompletionEntity.toBackup() = BackupCompletion(
     taskId = taskId,
     completedAt = completedAt.toString(),
     completedOn = completedOn.toString(),
+    scheduledDue = scheduledDue?.toString(),
+    scheduleKey = scheduleKey,
 )
 
 fun BackupCompletion.toEntity() = CompletionEntity(
@@ -108,4 +119,6 @@ fun BackupCompletion.toEntity() = CompletionEntity(
     taskId = taskId,
     completedAt = Instant.parse(completedAt),
     completedOn = LocalDate.parse(completedOn),
+    scheduledDue = scheduledDue?.let(LocalDate::parse),
+    scheduleKey = scheduleKey,
 )

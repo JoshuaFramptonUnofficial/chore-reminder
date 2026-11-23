@@ -2,16 +2,32 @@ package com.chorereminder
 
 import android.app.Application
 import android.content.Context
+import android.net.Uri
+import androidx.work.WorkManager
+import androidx.work.await
+import com.chorereminder.data.BackupResult
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import java.time.LocalDate
+import java.time.ZonedDateTime
+import java.time.Duration
+import androidx.work.ExistingWorkPolicy
 import com.chorereminder.data.BackupManager
 import com.chorereminder.data.ChoreDatabase
 import com.chorereminder.data.ChoreRepository
 import com.chorereminder.data.TaskEntity
 import com.chorereminder.notify.Notifications
+import com.chorereminder.notify.ReminderHistory
 import com.chorereminder.notify.ReminderScheduler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class ChoreApp : Application() {
 
@@ -23,8 +39,9 @@ class ChoreApp : Application() {
         container = AppContainer(this)
         Notifications.ensureChannel(this)
         // Catch up any task whose reminder was lost (fresh install, data import,
-        // WorkManager pruned). Cheap and idempotent -- scheduling uses REPLACE.
-        container.applicationScope.launch { container.rescheduleAll() }
+        // WorkManager pruned). KEEP is essential: this also runs when WorkManager
+        // starts our process, and must not cancel/postpone the worker starting it.
+        container.applicationScope.launch { container.rescheduleAll(ExistingWorkPolicy.KEEP) }
     }
 }
 
@@ -33,11 +50,52 @@ class ChoreApp : Application() {
  * would be more ceremony than the wiring it replaces.
  *
  * Every mutation that can change a due date goes through here, so the DB and the
- * scheduled reminders can never drift apart.
+ * scheduled reminders stay coordinated. Room and WorkManager are separate stores.
  */
 class AppContainer(private val context: Context) {
 
     val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    // Serialize delivery with chore mutations so completion/deletion cannot leave
+    // a worker posting or appending stale work after the notification was cleared.
+    internal val reminderMutex = Mutex()
+    data class TaskChange(val taskId: Long = -1, val revision: Long = -1, val sequence: Long = 0)
+    private val _taskChange = MutableStateFlow(TaskChange())
+    val taskChange = _taskChange.asStateFlow()
+    private fun changed(taskId: Long, revision: Long) {
+        _taskChange.value = TaskChange(taskId, revision, _taskChange.value.sequence + 1)
+    }
+    val uiPreferences = com.chorereminder.data.UiPreferences(context)
+    val undoQueue = com.chorereminder.domain.UndoQueue()
+    val reminderHistory = ReminderHistory(context)
+
+    private val _today = MutableStateFlow(LocalDate.now())
+    val today = _today.asStateFlow()
+    private val dateChanges = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
+    fun refreshDate() { _today.value = LocalDate.now(); dateChanges.trySend(Unit) }
+
+    init {
+        androidx.core.content.ContextCompat.registerReceiver(
+            context,
+            object : android.content.BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: android.content.Intent) { refreshDate() }
+            },
+            android.content.IntentFilter().apply {
+                addAction(android.content.Intent.ACTION_DATE_CHANGED)
+                addAction(android.content.Intent.ACTION_TIME_CHANGED)
+                addAction(android.content.Intent.ACTION_TIMEZONE_CHANGED)
+            },
+            androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        applicationScope.launch {
+            while (true) {
+                _today.value = LocalDate.now()
+                val now = ZonedDateTime.now()
+                val midnight = now.toLocalDate().plusDays(1).atStartOfDay(now.zone)
+                kotlinx.coroutines.withTimeoutOrNull(Duration.between(now, midnight).toMillis().coerceAtLeast(1)) { dateChanges.receive() }
+            }
+        }
+    }
 
     private val database by lazy { ChoreDatabase.get(context) }
 
@@ -45,45 +103,77 @@ class AppContainer(private val context: Context) {
 
     val backupManager: BackupManager by lazy { BackupManager(context, repository) }
 
+    fun setDefaultVisibility(rule: com.chorereminder.data.VisibilitySpec) {
+        rule.validate()
+        // Preserve selection order and finish saving even when Settings is closed.
+        applicationScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            reminderMutex.withLock { repository.setVisibility(rule) }
+        }
+    }
+
     /** Creates a task and arms its first reminder. */
-    suspend fun createTask(task: TaskEntity): Long {
+    suspend fun createTask(task: TaskEntity): Long = reminderMutex.withLock {
         val id = repository.insertTask(task)
         repository.getTask(id)?.let { ReminderScheduler.schedule(context, it) }
-        return id
+        id
     }
 
     /** FR-2: edits recompute the due date, so the reminder must be re-armed. */
-    suspend fun updateTask(task: TaskEntity) {
-        repository.updateTask(task)
+    suspend fun updateTask(task: TaskEntity) = reminderMutex.withLock {
+        val current = repository.getTask(task.id) ?: return@withLock
+        undoQueue.removeTask(task.id, android.os.SystemClock.elapsedRealtime())
+        repository.updateTask(task.copy(completionRevision = current.task.completionRevision + 1))
         repository.getTask(task.id)?.let { ReminderScheduler.schedule(context, it) }
     }
 
     /** FR-3: deleting a task cancels its pending reminder. */
-    suspend fun deleteTask(taskId: Long) {
+    suspend fun deleteTask(taskId: Long) = reminderMutex.withLock {
+        undoQueue.removeTask(taskId, android.os.SystemClock.elapsedRealtime())
         ReminderScheduler.cancel(context, taskId)
         repository.deleteTask(taskId)
+        reminderHistory.forget(taskId)
     }
 
-    /**
-     * FR-11/FR-14: identical effect whether triggered from the list, the
-     * confirmation screen, or the notification action.
-     *
-     * A one-off task has no next due date -- it's deleted on completion, so there is
-     * nothing left to reschedule. Its notification and pending reminder work are
-     * cancelled the same as any other finished task.
-     */
-    suspend fun completeTask(taskId: Long) {
-        val nextDue = repository.completeTask(taskId)
+    /** Occurrence comparison and completion insert are atomic in Room. */
+    suspend fun completeTask(taskId: Long, expectedRevision: Long, generation: String? = null) = reminderMutex.withLock {
+        currentCoroutineContext().ensureActive()
+        if (generation != null && generation != reminderHistory.generation()) return@withLock
+        val completed = repository.completeTask(taskId, expectedRevision) ?: return@withLock
+        changed(taskId, expectedRevision + 1)
         Notifications.cancel(context, taskId)
-        if (nextDue == null) {
-            ReminderScheduler.cancel(context, taskId)
-            return
+        val next = repository.getTask(taskId)
+        if (next == null) ReminderScheduler.cancel(context, taskId)
+        else ReminderScheduler.schedule(context, next)
+        undoQueue.add(completed.id, expectedRevision + 1, android.os.SystemClock.elapsedRealtime(), taskId)
+    }
+
+    suspend fun undoCompletion(completionId: Long) = reminderMutex.withLock {
+        val receipt = undoQueue.take(completionId, android.os.SystemClock.elapsedRealtime()) ?: return@withLock
+        val undone = repository.undoSpecific(completionId, receipt.revision) ?: return@withLock
+        changed(undone.taskId, receipt.revision + 1)
+        Notifications.cancel(context, undone.taskId)
+        // Keep today's delivery receipt: undo restores the chore without re-alerting.
+        repository.getTask(undone.taskId)?.let { ReminderScheduler.schedule(context, it) }
+    }
+
+    /** Parse/replace first; failed imports must preserve both data and reminders. */
+    suspend fun importBackup(uri: Uri): BackupResult = reminderMutex.withLock {
+        val result = backupManager.import(uri)
+        if (result is BackupResult.Success) {
+            // WorkManager is used only for this app's reminder/completion jobs.
+            WorkManager.getInstance(context).cancelAllWork().await()
+            undoQueue.clear()
+            Notifications.cancelAll(context)
+            reminderHistory.clear()
+            repository.getAllTasks().forEach { ReminderScheduler.schedule(context, it) }
         }
-        repository.getTask(taskId)?.let { ReminderScheduler.schedule(context, it) }
+        result
     }
 
     /** Re-arms reminders for every task -- used at startup and after an import. */
-    suspend fun rescheduleAll() {
-        repository.getAllTasks().forEach { ReminderScheduler.schedule(context, it) }
+    suspend fun rescheduleAll(
+        policy: ExistingWorkPolicy = ExistingWorkPolicy.REPLACE,
+    ) = reminderMutex.withLock {
+        repository.getAllTasks().forEach { ReminderScheduler.schedule(context, it, policy = policy) }
     }
 }

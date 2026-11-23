@@ -21,10 +21,14 @@ class CompleteActionReceiver : BroadcastReceiver() {
         val taskId = intent.getLongExtra(Notifications.EXTRA_TASK_ID, -1L)
         if (taskId <= 0L) return
 
+        val expected = intent.getLongExtra(Notifications.EXTRA_COMPLETION_ID, -1L)
+        val generation = intent.getStringExtra(Notifications.EXTRA_GENERATION) ?: return
+        if (expected < 0) return
         Notifications.cancel(context, taskId)
 
         val request = OneTimeWorkRequestBuilder<CompleteTaskWorker>()
-            .setInputData(workDataOf(CompleteTaskWorker.KEY_TASK_ID to taskId))
+            .setInputData(workDataOf(CompleteTaskWorker.KEY_TASK_ID to taskId,
+                Notifications.EXTRA_COMPLETION_ID to expected, Notifications.EXTRA_GENERATION to generation))
             .build()
         WorkManager.getInstance(context.applicationContext).enqueue(request)
     }

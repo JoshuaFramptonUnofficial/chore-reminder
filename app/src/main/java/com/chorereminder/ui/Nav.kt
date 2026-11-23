@@ -5,6 +5,14 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.layout.*
+import androidx.compose.ui.unit.dp
+import com.kyant.backdrop.backdrops.layerBackdrop
+import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.chorereminder.data.UiPreferences
+import com.chorereminder.ui.theme.LocalLiquidGlassBlur
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -64,6 +72,13 @@ fun ChoreNavHost(
         easing = FastOutSlowInEasing,
     )
 
+    val glassBlur by container.uiPreferences.liquidGlassBlur.collectAsStateWithLifecycle(UiPreferences.DEFAULT_GLASS_BLUR)
+    CompletionLifetime(container)
+    val entry by navController.currentBackStackEntryAsState()
+    val completionBackdrop = com.kyant.backdrop.backdrops.rememberLayerBackdrop()
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+    androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize().layerBackdrop(completionBackdrop)) {
+    androidx.compose.runtime.CompositionLocalProvider(LocalSceneBackdrop provides completionBackdrop, LocalLiquidGlassBlur provides glassBlur.dp) {
     NavHost(
         navController = navController,
         startDestination = Routes.HOME,
@@ -100,6 +115,7 @@ fun ChoreNavHost(
                 onAddTask = { navController.navigate(Routes.edit(0L)) },
                 onOpenTask = { navController.navigate(Routes.edit(it)) },
                 onOpenSettings = { navController.navigate(Routes.SETTINGS) },
+                showCompletion = entry?.destination?.route == Routes.HOME,
             )
         }
 
@@ -134,5 +150,8 @@ fun ChoreNavHost(
             }
             CompleteScreen(viewModel = vm, onFinished = leave, onDismiss = leave)
         }
+    }
+    }
+    }
     }
 }

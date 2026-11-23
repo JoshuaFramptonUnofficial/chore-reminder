@@ -3,9 +3,11 @@ package com.chorereminder.data
 import com.chorereminder.domain.DueState
 import com.chorereminder.domain.dueStateFor
 import com.chorereminder.domain.nextDueDate
+import com.chorereminder.domain.scheduleKey
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.flowOf
 import java.time.Instant
 import java.time.LocalDate
 
@@ -26,6 +28,7 @@ data class TaskView(
     val dueState: DueState,
     val lastCompletedOn: LocalDate?,
     val completionCount: Int,
+    val occurrenceRevision: Long = 0L,
 )
 
 /** A category header plus its tasks, sorted soonest-due first (FR-13). */
@@ -35,7 +38,13 @@ data class CategoryGroup(
     val tasks: List<TaskView>,
 )
 
+data class HomeData(val groups: List<CategoryGroup> = emptyList(), val revisions: Map<Long, Long> = emptyMap())
+
 class ChoreRepository(private val dao: ChoreDao) {
+
+    fun observeVisibility(): Flow<VisibilitySpec> = dao.observeVisibility().map { it?.rule ?: VisibilitySpec() }
+    suspend fun setVisibility(rule: VisibilitySpec) { rule.validate(); dao.setVisibility(VisibilitySettingsEntity(rule = rule)) }
+    suspend fun undoSpecific(id: Long, revision: Long) = dao.undoSpecific(id, revision)
 
     fun observeCategories(): Flow<List<CategoryEntity>> = dao.observeCategories()
 
@@ -50,10 +59,13 @@ class ChoreRepository(private val dao: ChoreDao) {
      * Home-screen model: tasks grouped by category, each group sorted soonest-due
      * first, groups ordered most-urgent-first so whatever needs attention is on top.
      */
-    fun observeGroupedTasks(today: () -> LocalDate = LocalDate::now): Flow<List<CategoryGroup>> =
-        dao.observeTasksWithDetails().map { rows ->
-            val now = today()
-            rows.map { it.toView(now) }
+    fun observeGroupedTasks(today: Flow<LocalDate> = flowOf(LocalDate.now()), includeHidden: Flow<Boolean> = flowOf(false)): Flow<List<CategoryGroup>> =
+        observeHomeData(today, includeHidden).map { it.groups }
+
+    fun observeHomeData(today: Flow<LocalDate> = flowOf(LocalDate.now()), includeHidden: Flow<Boolean> = flowOf(false)): Flow<HomeData> =
+        combine(dao.observeTasksWithDetails(), today, observeVisibility(), includeHidden) { rows, now, default, all ->
+            val groups = rows.filter { it.isActive }.map { it.toView(now) }
+                .filter { all || (it.task.visibility ?: default).isVisible(now, it.nextDue, it.lastCompletedOn) }
                 .groupBy { it.task.categoryId }
                 .map { (categoryId, tasks) ->
                     CategoryGroup(
@@ -70,16 +82,22 @@ class ChoreRepository(private val dao: ChoreDao) {
                         { it.categoryName.lowercase() },
                     ),
                 )
+            HomeData(groups, rows.associate { it.task.id to it.task.completionRevision })
         }
 
-    fun observeTask(taskId: Long, today: () -> LocalDate = LocalDate::now): Flow<TaskView?> =
-        dao.observeTaskWithDetails(taskId).map { it?.toView(today()) }
+    fun observeTask(taskId: Long, today: Flow<LocalDate> = flowOf(LocalDate.now())): Flow<TaskView?> =
+        combine(dao.observeTaskWithDetails(taskId), today) { row, date ->
+            row?.takeIf { it.isActive }?.toView(date)
+        }
+
+    fun observeLatestCompletion(): Flow<CompletionEntity?> = dao.observeLatestCompletion()
+    suspend fun undo(completionId: Long): CompletionEntity? = dao.undo(completionId)
 
     suspend fun getTask(taskId: Long, today: LocalDate = LocalDate.now()): TaskView? =
-        dao.getTaskWithDetails(taskId)?.toView(today)
+        dao.getTaskWithDetails(taskId)?.takeIf { it.isActive }?.toView(today)
 
     suspend fun getAllTasks(today: LocalDate = LocalDate.now()): List<TaskView> =
-        dao.getAllTasksWithDetails().map { it.toView(today) }
+        dao.getAllTasksWithDetails().filter { it.isActive }.map { it.toView(today) }
 
     // --- Mutations -------------------------------------------------------------
 
@@ -89,29 +107,8 @@ class ChoreRepository(private val dao: ChoreDao) {
 
     suspend fun deleteTask(taskId: Long) = dao.deleteTask(taskId)
 
-    /**
-     * FR-11: append a timestamped completion. Returns the task's recomputed next-due
-     * date so the caller can reschedule, or null if the task vanished underneath us
-     * (deleted concurrently, or just now -- a one-off task has no next occurrence,
-     * so completing it finishes the task for good).
-     */
-    suspend fun completeTask(taskId: Long, at: Instant = Instant.now()): LocalDate? {
-        val details = dao.getTaskWithDetails(taskId) ?: return null
-        val completedOn = at.atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-        dao.insertCompletion(
-            CompletionEntity(taskId = taskId, completedAt = at, completedOn = completedOn),
-        )
-        val task = details.task
-        if (task.recurrence.kind == RecurrenceKind.ONE_OFF) {
-            dao.deleteTask(taskId)
-            return null
-        }
-        return nextDueDate(
-            recurrence = task.recurrence.toDomain(task.createdDate),
-            createdDate = task.createdDate,
-            lastCompletion = completedOn,
-        )
-    }
+    suspend fun completeTask(taskId: Long, expectedRevision: Long, at: Instant = Instant.now()): CompletionEntity? =
+        dao.complete(taskId, expectedRevision, at)
 
     suspend fun createCategory(name: String): Long {
         val trimmed = name.trim()
@@ -135,27 +132,26 @@ class ChoreRepository(private val dao: ChoreDao) {
 
     // --- Backup ----------------------------------------------------------------
 
-    suspend fun snapshot(): Triple<List<CategoryEntity>, List<TaskEntity>, List<CompletionEntity>> =
-        Triple(
-            dao.getAllCategories(),
-            dao.getAllTasksWithDetails().map { it.task },
-            dao.getAllCompletions(),
-        )
+    suspend fun snapshot(): BackupSnapshot = dao.snapshot()
 
     suspend fun replaceAll(
         categories: List<CategoryEntity>,
         tasks: List<TaskEntity>,
         completions: List<CompletionEntity>,
-    ) = dao.replaceAll(categories, tasks, completions)
+        invalidateOccurrences: Boolean = false,
+        defaultVisibility: VisibilitySpec = VisibilitySpec(),
+    ) = dao.replaceAll(categories, tasks, completions, invalidateOccurrences, defaultVisibility)
 }
 
 /** Shared projection so the list, detail and scheduler all agree on the due date. */
 fun TaskWithDetails.toView(today: LocalDate): TaskView {
-    val lastCompletedOn = completions.maxByOrNull { it.completedAt }?.completedOn
+    val lastCompletedOn = lastCompletion?.completedOn
+    val rule = task.recurrence.toDomain(task.createdDate)
     val nextDue = nextDueDate(
-        recurrence = task.recurrence.toDomain(task.createdDate),
+        recurrence = rule,
         createdDate = task.createdDate,
         lastCompletion = lastCompletedOn,
+        completedOccurrence = lastCompletion?.takeIf { it.scheduleKey == rule.scheduleKey() }?.scheduledDue,
     )
     return TaskView(
         task = task,
@@ -164,5 +160,9 @@ fun TaskWithDetails.toView(today: LocalDate): TaskView {
         dueState = dueStateFor(nextDue, today),
         lastCompletedOn = lastCompletedOn,
         completionCount = completions.size,
+        occurrenceRevision = task.completionRevision,
     )
 }
+
+private val TaskWithDetails.isActive: Boolean
+    get() = task.recurrence.kind != RecurrenceKind.ONE_OFF || completions.isEmpty()

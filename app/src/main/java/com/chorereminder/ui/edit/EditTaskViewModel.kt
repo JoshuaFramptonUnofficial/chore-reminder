@@ -4,6 +4,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.chorereminder.AppContainer
+import com.chorereminder.data.ChoreRepository
+import kotlinx.coroutines.CancellationException
 import com.chorereminder.data.CategoryEntity
 import com.chorereminder.data.IconType
 import com.chorereminder.data.RecurrenceKind
@@ -35,34 +37,60 @@ data class EditTaskState(
     val anchor: LocalDate = LocalDate.now(),
     val dayOfWeek: DayOfWeek = LocalDate.now().dayOfWeek,
     val createdDate: LocalDate = LocalDate.now(),
+    val visibility: com.chorereminder.data.VisibilitySpec? = null,
     val loaded: Boolean = false,
+    val missing: Boolean = false,
+    val saving: Boolean = false,
+    val deleting: Boolean = false,
+    val error: String? = null,
+    val finished: Boolean = false,
 ) {
     val isEditing: Boolean get() = taskId != 0L
+
+    val busy: Boolean get() = saving || deleting
+
+    internal fun draft() = copy(loaded = true, missing = false, saving = false, deleting = false, error = null, finished = false)
 
     val interval: Int? get() = intervalText.toIntOrNull()?.takeIf { it >= 1 }
 
     /** FR-1: a task needs a name and a valid recurrence rule to be saveable. */
     val canSave: Boolean
-        get() = name.isNotBlank() &&
+        get() = loaded && !missing && !busy && name.isNotBlank() && (visibility == null || visibility.amount in 1..999) &&
             (kind == RecurrenceKind.FIXED_WEEKDAY || kind == RecurrenceKind.ONE_OFF || interval != null)
 }
 
-class EditTaskViewModel(
-    private val container: AppContainer,
+class EditTaskViewModel internal constructor(
+    private val repository: ChoreRepository,
     private val taskId: Long,
+    private val persistTask: suspend (TaskEntity) -> Long,
+    private val removeTask: suspend (Long) -> Unit,
 ) : ViewModel() {
+    constructor(container: AppContainer, taskId: Long) : this(container.repository, taskId,
+        { entity -> if (entity.id == 0L) container.createTask(entity) else { container.updateTask(entity); entity.id } },
+        { id -> container.deleteTask(id) })
+
 
     private val _state = MutableStateFlow(EditTaskState(taskId = taskId))
     val state: StateFlow<EditTaskState> = _state.asStateFlow()
 
+    private var baseline: EditTaskState? = null
+    val hasUnsavedChanges: Boolean get() = _state.value.let { it.loaded && !it.missing && it.draft() != baseline?.draft() }
+
+    private fun updateDraft(change: (EditTaskState) -> EditTaskState) {
+        _state.update { if (it.loaded && !it.busy && !it.missing) change(it).copy(error = null) else it }
+    }
+
+    val defaultVisibility = repository.observeVisibility()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.chorereminder.data.VisibilitySpec())
+
     val categories: StateFlow<List<CategoryEntity>> =
-        container.repository.observeCategories()
+        repository.observeCategories()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     init {
         if (taskId != 0L) {
             viewModelScope.launch {
-                val view = container.repository.getTask(taskId)
+                val view = repository.getTask(taskId)
                 if (view != null) {
                     val t = view.task
                     val r = t.recurrence
@@ -78,43 +106,52 @@ class EditTaskViewModel(
                         anchor = r.anchor ?: t.createdDate,
                         dayOfWeek = r.dayOfWeek ?: t.createdDate.dayOfWeek,
                         createdDate = t.createdDate,
+                        visibility = t.visibility,
                         loaded = true,
                     )
                 } else {
-                    _state.update { it.copy(loaded = true) }
+                    _state.update { it.copy(loaded = true, missing = true) }
                 }
+                baseline = _state.value
             }
         } else {
             _state.update { it.copy(loaded = true) }
+            baseline = _state.value
         }
     }
 
-    fun setName(value: String) = _state.update { it.copy(name = value) }
+    fun setVisibility(rule: com.chorereminder.data.VisibilitySpec?) = updateDraft { it.copy(visibility = rule) }
+
+    fun setName(value: String) = updateDraft { it.copy(name = value) }
     fun setIcon(type: IconType, value: String) =
-        _state.update { it.copy(iconType = type, iconValue = value) }
-    fun setCategory(id: Long) = _state.update { it.copy(categoryId = id) }
-    fun setNewCategoryName(value: String) = _state.update { it.copy(newCategoryName = value) }
-    fun setKind(kind: RecurrenceKind) = _state.update { it.copy(kind = kind) }
+        updateDraft { it.copy(iconType = type, iconValue = value) }
+    fun setCategory(id: Long) = updateDraft { it.copy(categoryId = id) }
+    fun setNewCategoryName(value: String) = updateDraft { it.copy(newCategoryName = value) }
+    fun setKind(kind: RecurrenceKind) = updateDraft { it.copy(kind = kind) }
     fun setIntervalText(value: String) =
-        _state.update { it.copy(intervalText = value.filter(Char::isDigit).take(4)) }
-    fun setUnit(unit: IntervalUnit) = _state.update { it.copy(unit = unit) }
-    fun setAnchor(date: LocalDate) = _state.update { it.copy(anchor = date) }
-    fun setDayOfWeek(day: DayOfWeek) = _state.update { it.copy(dayOfWeek = day) }
+        updateDraft { it.copy(intervalText = value.filter(Char::isDigit).take(4)) }
+    fun setUnit(unit: IntervalUnit) = updateDraft { it.copy(unit = unit) }
+    fun setAnchor(date: LocalDate) = updateDraft { it.copy(anchor = date) }
+    fun setDayOfWeek(day: DayOfWeek) = updateDraft { it.copy(dayOfWeek = day) }
 
     /** Creates (or reuses) a named category and selects it (FR-12). */
     fun addCategory(onDone: () -> Unit = {}) {
         val name = _state.value.newCategoryName.trim()
-        if (name.isEmpty()) return
+        if (name.isEmpty() || _state.value.busy || !_state.value.loaded) return
         viewModelScope.launch {
-            val id = container.repository.createCategory(name)
-            _state.update { it.copy(categoryId = id, newCategoryName = "") }
-            onDone()
+            try {
+                val id = repository.createCategory(name)
+                updateDraft { it.copy(categoryId = id, newCategoryName = "") }
+                onDone()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _state.update { it.copy(error = "Could not add the category. Please try again.") } }
         }
     }
 
-    fun save(onSaved: () -> Unit) {
+    fun save() {
         val s = _state.value
         if (!s.canSave) return
+        _state.value = s.copy(saving = true, error = null)
 
         val spec = when (s.kind) {
             RecurrenceKind.RELATIVE -> RecurrenceSpec(
@@ -147,21 +184,32 @@ class EditTaskViewModel(
             // FR-2: editing never rewrites the creation date, so relative rules on
             // a never-completed task keep their original reference point.
             createdDate = s.createdDate,
+            visibility = s.visibility,
             recurrence = spec,
         )
 
         viewModelScope.launch {
-            if (s.isEditing) container.updateTask(entity) else container.createTask(entity)
-            onSaved()
+            try {
+                val id = persistTask(entity)
+                baseline = s.copy(taskId = id)
+                // Keep the gate closed through navigation, including repeated queued taps.
+                _state.update { it.copy(taskId = id, finished = true) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                _state.update { it.copy(saving = false, error = "Could not save this chore. Your edits are still here. Please try again.") }
+            }
         }
     }
 
-    fun delete(onDeleted: () -> Unit) {
-        val id = _state.value.taskId
-        if (id == 0L) return
+    fun delete() {
+        val current = _state.value
+        val id = current.taskId
+        if (id == 0L || current.busy || !current.loaded || current.missing) return
+        _state.value = current.copy(deleting = true, error = null)
         viewModelScope.launch {
-            container.deleteTask(id)
-            onDeleted()
+            try { removeTask(id); _state.update { it.copy(finished = true) } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _state.update { it.copy(deleting = false, error = "Could not delete this chore. Please try again.") } }
         }
     }
 

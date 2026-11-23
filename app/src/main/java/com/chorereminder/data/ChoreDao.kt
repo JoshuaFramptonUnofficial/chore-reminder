@@ -1,5 +1,6 @@
 package com.chorereminder.data
 
+import com.chorereminder.domain.scheduleKey
 import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
@@ -10,6 +11,63 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface ChoreDao {
+
+    @Query("SELECT * FROM completions ORDER BY id DESC LIMIT 1")
+    fun observeLatestCompletion(): Flow<CompletionEntity?>
+
+    @Query("SELECT * FROM completions ORDER BY id DESC LIMIT 1")
+    suspend fun latestCompletion(): CompletionEntity?
+
+    /** Compare the displayed occurrence inside the same transaction as the write. */
+    @Transaction
+    suspend fun complete(taskId: Long, expectedRevision: Long, at: java.time.Instant): CompletionEntity? {
+        val details = getTaskWithDetails(taskId) ?: return null
+        if (details.task.completionRevision != expectedRevision) return null
+        if (details.task.recurrence.kind == RecurrenceKind.ONE_OFF && details.completions.isNotEmpty()) return null
+        val completion = CompletionEntity(
+            taskId = taskId, completedAt = at,
+            completedOn = at.atZone(java.time.ZoneId.systemDefault()).toLocalDate(),
+            scheduledDue = details.toView(at.atZone(java.time.ZoneId.systemDefault()).toLocalDate()).nextDue,
+            scheduleKey = details.task.recurrence.toDomain(details.task.createdDate).scheduleKey(),
+        )
+        val inserted = completion.copy(id = insertCompletion(completion))
+        updateTask(details.task.copy(completionRevision = details.task.completionRevision + 1))
+        return inserted
+    }
+
+    @Transaction
+    suspend fun undo(completionId: Long): CompletionEntity? {
+        val latest = latestCompletion() ?: return null
+        if (latest.id != completionId) return null
+        val task = getTaskWithDetails(latest.taskId)?.task ?: return null
+        updateTask(task.copy(completionRevision = task.completionRevision + 1))
+        deleteCompletion(latest.id)
+        return latest
+    }
+
+    @Transaction
+    suspend fun snapshot(): BackupSnapshot =
+        BackupSnapshot(getAllCategories(), getAllTasksWithDetails().map { it.task }, getAllCompletions(), getVisibility()?.rule ?: VisibilitySpec())
+
+    @Query("SELECT * FROM visibility_settings WHERE id = 1")
+    fun observeVisibility(): Flow<VisibilitySettingsEntity?>
+    @Query("SELECT * FROM visibility_settings WHERE id = 1")
+    suspend fun getVisibility(): VisibilitySettingsEntity?
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun setVisibility(settings: VisibilitySettingsEntity)
+
+    @Query("SELECT * FROM completions WHERE id = :id")
+    suspend fun getCompletion(id: Long): CompletionEntity?
+
+    @Transaction
+    suspend fun undoSpecific(id: Long, revision: Long): CompletionEntity? {
+        val completion = getCompletion(id) ?: return null
+        val details = getTaskWithDetails(completion.taskId) ?: return null
+        if (details.completions.maxByOrNull { it.id }?.id != id || details.task.completionRevision != revision) return null
+        updateTask(details.task.copy(completionRevision = revision + 1))
+        deleteCompletion(id)
+        return completion
+    }
 
     // --- Reads -----------------------------------------------------------------
 
@@ -44,7 +102,7 @@ interface ChoreDao {
     @Query("SELECT * FROM categories WHERE name = :name AND id != :excludingId LIMIT 1")
     suspend fun findCategoryByName(name: String, excludingId: Long): CategoryEntity?
 
-    @Query("SELECT categoryId, COUNT(*) as count FROM tasks GROUP BY categoryId")
+    @Query("SELECT categoryId, COUNT(*) as count FROM tasks WHERE NOT (rec_kind = 'ONE_OFF' AND EXISTS (SELECT 1 FROM completions WHERE taskId = tasks.id)) GROUP BY categoryId")
     fun observeCategoryTaskCounts(): Flow<List<CategoryTaskCount>>
 
     // --- Writes ----------------------------------------------------------------
@@ -103,12 +161,18 @@ interface ChoreDao {
         categories: List<CategoryEntity>,
         tasks: List<TaskEntity>,
         completions: List<CompletionEntity>,
+        invalidateOccurrences: Boolean = false,
+        defaultVisibility: VisibilitySpec = VisibilitySpec(),
     ) {
+        val revisionBase = if (invalidateOccurrences)
+            Math.addExact(getAllTasksWithDetails().maxOfOrNull { it.task.completionRevision } ?: 0L, 1L)
+            else 0L
         deleteAllCompletions()
         deleteAllTasks()
         deleteAllCategories()
         insertCategories(categories)
-        insertTasks(tasks)
+        insertTasks(tasks.map { it.copy(completionRevision = Math.addExact(it.completionRevision, revisionBase)) })
         insertCompletions(completions)
+        setVisibility(VisibilitySettingsEntity(rule = defaultVisibility))
     }
 }

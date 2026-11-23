@@ -10,7 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
+import com.chorereminder.ui.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -57,7 +57,7 @@ fun CompleteScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val hazeState = rememberHazeState()
-    val today = LocalDate.now()
+    val today by viewModel.today.collectAsStateWithLifecycle()
 
     Box(
         modifier = Modifier
@@ -150,6 +150,7 @@ fun CompleteScreen(
                             recurrence = view.task.recurrence.toDomain(view.task.createdDate),
                             createdDate = view.task.createdDate,
                             lastCompletion = today,
+                            completedOccurrence = view.nextDue,
                         )
                         AlertDialog(
                             onDismissRequest = { confirmEarly = false },

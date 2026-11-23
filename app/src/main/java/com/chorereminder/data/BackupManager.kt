@@ -36,9 +36,12 @@ class BackupManager(
 
     suspend fun export(uri: Uri): BackupResult = withContext(Dispatchers.IO) {
         try {
-            val (categories, tasks, completions) = repository.snapshot()
+            val snapshot = repository.snapshot()
+            val (categories, tasks, completions) = snapshot
             val backup = BackupFile(
+                version = BackupFile.CURRENT_VERSION,
                 exportedAt = Instant.now().toString(),
+                defaultVisibility = snapshot.defaultVisibility,
                 categories = categories.map { it.toBackup() },
                 tasks = tasks.map { it.toBackup() },
                 completions = completions.map { it.toBackup() },
@@ -66,7 +69,7 @@ class BackupManager(
                 ?: return@withContext BackupResult.Failure("Could not open the file.")
 
             val backup = json.decodeFromString<BackupFile>(text)
-            if (backup.version > BackupFile.CURRENT_VERSION) {
+            if (backup.version !in 1..BackupFile.CURRENT_VERSION) {
                 return@withContext BackupResult.Failure(
                     "That backup was made by a newer version of the app.",
                 )
@@ -74,6 +77,8 @@ class BackupManager(
 
             // Parse everything up front: any bad enum name or date string throws
             // here, before the DB has been touched at all.
+            backup.defaultVisibility.validate()
+            backup.tasks.forEach { it.visibility?.validate() }
             val categories = backup.categories.map { it.toEntity() }
             val tasks = backup.tasks.map { it.toEntity() }
             val completions = backup.completions.map { it.toEntity() }
@@ -95,7 +100,7 @@ class BackupManager(
             // Orphan completions would violate the FK and abort the transaction.
             val validCompletions = completions.filter { it.taskId in taskIds }
 
-            Triple(withDefault, repaired, validCompletions)
+            BackupSnapshot(withDefault, repaired, validCompletions, backup.defaultVisibility)
         } catch (e: Exception) {
             return@withContext BackupResult.Failure(
                 "That file isn't a valid backup. Your data was not changed.",
@@ -103,7 +108,7 @@ class BackupManager(
         }
 
         try {
-            repository.replaceAll(parsed.first, parsed.second, parsed.third)
+            repository.replaceAll(parsed.first, parsed.second, parsed.third, invalidateOccurrences = true, defaultVisibility = parsed.defaultVisibility)
             BackupResult.Success("Imported ${parsed.second.size} tasks.")
         } catch (e: Exception) {
             BackupResult.Failure("Import failed: ${e.message ?: "your data was not changed."}")

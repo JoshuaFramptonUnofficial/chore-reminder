@@ -13,23 +13,53 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 class SettingsViewModel(private val container: AppContainer) : ViewModel() {
+
+    val glassBlur = container.uiPreferences.liquidGlassBlur
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.chorereminder.data.UiPreferences.DEFAULT_GLASS_BLUR)
+    fun setGlassBlur(value: Int) {
+        container.applicationScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            container.uiPreferences.setLiquidGlassBlur(value)
+        }
+    }
+
+    val followCompleted = container.uiPreferences.followCompleted
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
+    fun setFollowCompleted(value: Boolean) {
+        container.applicationScope.launch(start = kotlinx.coroutines.CoroutineStart.UNDISPATCHED) {
+            container.uiPreferences.setFollowCompleted(value)
+        }
+    }
+
+    val visibility = container.repository.observeVisibility()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), com.chorereminder.data.VisibilitySpec())
+    fun setVisibility(rule: com.chorereminder.data.VisibilitySpec) {
+        if (rule.amount !in 1..999) return
+        container.setDefaultVisibility(rule)
+    }
 
     private val _message = MutableStateFlow<String?>(null)
     val message: StateFlow<String?> = _message.asStateFlow()
 
     private val _busy = MutableStateFlow(false)
     val busy: StateFlow<Boolean> = _busy.asStateFlow()
+    private val _operation = MutableStateFlow<String?>(null)
+    val operation = _operation.asStateFlow()
 
     val categories: StateFlow<List<CategoryWithCount>> =
         container.repository.observeCategoriesWithCounts()
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** FR-12: a new category the user creates here needs no chore to exist yet. */
-    fun addCategory(name: String) {
-        if (name.isBlank()) return
-        viewModelScope.launch { container.repository.createCategory(name) }
+    fun addCategory(name: String, onDone: () -> Unit) {
+        if (name.isBlank() || _busy.value) return
+        viewModelScope.launch {
+            try { container.repository.createCategory(name); onDone() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _message.value = "Could not add the category. Your text has been kept." }
+        }
     }
 
     fun renameCategory(categoryId: Long, newName: String, onResult: (Boolean) -> Unit) {
@@ -48,29 +78,32 @@ class SettingsViewModel(private val container: AppContainer) : ViewModel() {
     fun suggestedFileName(): String = container.backupManager.suggestedFileName()
 
     fun export(uri: Uri) {
-        _busy.value = true
+        if (!_busy.compareAndSet(false, true)) return
+        _operation.value = "Exporting backup..."
         viewModelScope.launch {
-            _message.value = when (val r = container.backupManager.export(uri)) {
-                is BackupResult.Success -> r.message
-                is BackupResult.Failure -> r.message
-            }
-            _busy.value = false
+            try {
+                _message.value = when (val result = container.backupManager.export(uri)) {
+                    is BackupResult.Success -> result.message
+                    is BackupResult.Failure -> result.message
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _message.value = "Could not export the backup. Please try another location." }
+            finally { _busy.value = false; _operation.value = null }
         }
     }
 
     fun import(uri: Uri) {
-        _busy.value = true
-        viewModelScope.launch {
-            val result = container.backupManager.import(uri)
-            if (result is BackupResult.Success) {
-                // Imported tasks have new due dates -- re-arm every reminder.
-                container.rescheduleAll()
-            }
-            _message.value = when (result) {
-                is BackupResult.Success -> result.message
-                is BackupResult.Failure -> result.message
-            }
-            _busy.value = false
+        if (!_busy.compareAndSet(false, true)) return
+        _operation.value = "Importing backup..."
+        container.applicationScope.launch {
+            try {
+                _message.value = when (val result = container.importBackup(uri)) {
+                    is BackupResult.Success -> result.message
+                    is BackupResult.Failure -> result.message
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { _message.value = "Import could not finish. Check your chores before trying again." }
+            finally { _busy.value = false; _operation.value = null }
         }
     }
 

@@ -22,14 +22,17 @@ class CompleteViewModel(
     private val taskId: Long,
 ) : ViewModel() {
 
+    val today = container.today
+
     private val _state = MutableStateFlow<CompleteUiState>(CompleteUiState.Loading)
     val state: StateFlow<CompleteUiState> = _state.asStateFlow()
 
     init {
         viewModelScope.launch {
-            val view = container.repository.getTask(taskId)
-            _state.value =
-                if (view == null) CompleteUiState.Missing else CompleteUiState.Ready(view)
+            container.repository.observeTask(taskId, container.today).collect { view ->
+                val saving = (_state.value as? CompleteUiState.Ready)?.saving ?: false
+                _state.value = if (view == null) CompleteUiState.Missing else CompleteUiState.Ready(view, saving)
+            }
         }
     }
 
@@ -39,7 +42,7 @@ class CompleteViewModel(
         if (current !is CompleteUiState.Ready || current.saving) return
         _state.value = current.copy(saving = true)
         viewModelScope.launch {
-            container.completeTask(taskId)
+            container.completeTask(taskId, current.task.occurrenceRevision)
             onFinished()
         }
     }

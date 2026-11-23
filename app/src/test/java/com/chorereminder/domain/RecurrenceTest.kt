@@ -73,7 +73,7 @@ class RecurrenceTest {
     // every 14d from Oct 1, completed Oct 10 -> nextDue stays Oct 15 (anchor unmoved)
 
     @Test
-    fun fixedInterval_completedEarly_keepsCalendarAnchor() {
+    fun fixedInterval_legacyCompletionWithoutConsumedDate_keepsCalendarAnchor() {
         val next = nextDueDate(
             recurrence = Recurrence.FixedInterval(date("2026-10-01"), 14, IntervalUnit.DAYS),
             createdDate = date("2026-10-01"),
@@ -279,5 +279,42 @@ class RecurrenceTest {
         assertEquals(true, DueState.OVERDUE.isActionable)
         assertEquals(true, DueState.DUE_TODAY.isActionable)
         assertEquals(false, DueState.UPCOMING.isActionable)
+    }
+
+    @Test fun earlyWeekdayConsumesMonday_evenOnConsecutiveFridayCompletions() {
+        val friday = date("2026-11-13")
+        val rule = Recurrence.FixedWeekday(DayOfWeek.MONDAY)
+        var due = nextDueDate(rule, friday, null)
+        assertEquals(date("2026-11-16"), due)
+        due = nextDueDate(rule, friday, friday, due)
+        assertEquals(date("2026-11-23"), due)
+        assertEquals(date("2026-11-30"), nextDueDate(rule, friday, friday, due))
+    }
+
+    @Test fun earlyFixedMonthlyConsumesClampedOccurrenceAndRecoversAnchor() {
+        val anchor = date("2028-01-31")
+        val rule = Recurrence.FixedInterval(anchor, 1, IntervalUnit.MONTHS)
+        assertEquals(date("2028-03-31"), nextDueDate(rule, anchor, date("2028-02-10"), date("2028-02-29")))
+        assertEquals(date("2028-04-30"), nextDueDate(rule, anchor, date("2028-02-10"), date("2028-03-31")))
+    }
+
+    @Test fun earlyFixedIntervalsKeepOriginalGridAcrossYearBoundary() {
+        for (unit in listOf(IntervalUnit.DAYS, IntervalUnit.WEEKS)) {
+            val anchor = date("2026-12-28")
+            val rule = Recurrence.FixedInterval(anchor, 3, unit)
+            assertEquals(anchor.plus(3, unit), nextDueDate(rule, anchor, date("2026-12-20"), anchor))
+        }
+    }
+
+    @Test fun consumedDateDoesNotChangeRelativeOrOneOffRules() {
+        val actual = date("2026-11-13")
+        val consumed = actual.plusMonths(2)
+        assertEquals(actual.plusWeeks(2), nextDueDate(Recurrence.Relative(2, IntervalUnit.WEEKS), actual, actual, consumed))
+        assertEquals(consumed, nextDueDate(Recurrence.OneOff(consumed), actual, actual, consumed))
+    }
+
+    @Test fun lateCompletionStillSkipsMissedOccurrences() {
+        val rule = Recurrence.FixedWeekday(DayOfWeek.MONDAY)
+        assertEquals(date("2026-11-23"), nextDueDate(rule, date("2026-11-01"), date("2026-11-20"), date("2026-11-02")))
     }
 }

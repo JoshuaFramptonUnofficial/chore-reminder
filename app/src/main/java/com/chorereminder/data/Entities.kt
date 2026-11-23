@@ -51,6 +51,8 @@ data class TaskEntity(
     val iconValue: String = "CheckCircle",
     @ColumnInfo(defaultValue = "1") val categoryId: Long = UNCATEGORIZED_ID,
     val createdDate: LocalDate,
+    @ColumnInfo(defaultValue = "0") val completionRevision: Long = 0,
+    @Embedded(prefix = "visibility_") val visibility: VisibilitySpec? = null,
     @Embedded(prefix = "rec_") val recurrence: RecurrenceSpec,
 ) {
     /** Stable per-task notification id / PendingIntent request code (see plan). */
@@ -120,8 +122,11 @@ data class CompletionEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val taskId: Long,
     val completedAt: Instant,
-    /** Local date of completion -- what the recurrence math actually keys off. */
+    /** Actual local completion date, retained for relative recurrence and visibility. */
     val completedOn: LocalDate,
+    /** Due date consumed by this action; legacy history has neither field. */
+    val scheduledDue: LocalDate? = null,
+    val scheduleKey: String? = null,
 )
 
 /** Projection for [ChoreDao.observeCategoryTaskCounts]. */
@@ -135,5 +140,5 @@ data class TaskWithDetails(
     @Relation(parentColumn = "id", entityColumn = "taskId")
     val completions: List<CompletionEntity>,
 ) {
-    val lastCompletion: CompletionEntity? get() = completions.maxByOrNull { it.completedAt }
+    val lastCompletion: CompletionEntity? get() = completions.maxByOrNull { it.id }
 }

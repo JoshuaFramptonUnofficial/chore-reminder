@@ -27,14 +27,13 @@ class MainActivity : ComponentActivity() {
      * started collecting -- is not dropped.
      */
     private val notificationTaskIds = MutableSharedFlow<Long>(replay = 1, extraBufferCapacity = 4)
+    private var remindersEnabled = false
 
     private val requestNotificationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
             // Denial is fine: the I/O matrix says the app stays usable and Settings
             // shows the "reminders off" explainer.
-            if (granted) {
-                lifecycleScope.launch { (application as ChoreApp).container.rescheduleAll() }
-            }
+            refreshReminderPermission()
         }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -54,11 +53,27 @@ class MainActivity : ComponentActivity() {
                 ) {
                     ChoreNavHost(
                         container = container,
-                        notificationTaskIds = notificationTaskIds.asSharedFlow(),
+                        notificationTaskIds = notificationTaskIds,
                     )
                 }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Also catches permission/channel changes made in Android Settings. This
+        // runs only for the foreground activity, never a worker's cold start.
+        (application as ChoreApp).container.refreshDate()
+        refreshReminderPermission()
+    }
+
+    private fun refreshReminderPermission() {
+        val enabled = Notifications.canPost(this)
+        if (enabled && !remindersEnabled) {
+            lifecycleScope.launch { (application as ChoreApp).container.rescheduleAll() }
+        }
+        remindersEnabled = enabled
     }
 
     /**

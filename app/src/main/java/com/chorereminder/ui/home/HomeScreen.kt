@@ -18,6 +18,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -26,7 +32,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.AlertDialog
+import com.chorereminder.ui.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
@@ -38,6 +44,14 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.runtime.SideEffect
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import com.chorereminder.R
+import com.chorereminder.ui.CompletionBar
+import com.chorereminder.ui.theme.progressiveHeader
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -84,45 +98,90 @@ fun HomeScreen(
     onAddTask: () -> Unit,
     onOpenTask: (Long) -> Unit,
     onOpenSettings: () -> Unit,
+    showCompletion: Boolean = true,
 ) {
-    val groups by viewModel.groups.collectAsStateWithLifecycle()
+    val homeData by viewModel.homeData.collectAsStateWithLifecycle()
+    val groups = homeData.groups
+    val listState = rememberLazyListState()
+    val follow by viewModel.followCompleted.collectAsStateWithLifecycle()
+    val change by viewModel.taskChange.collectAsStateWithLifecycle()
+    val keys: List<Any> = groups.flatMap { group -> listOf<Any>("header-${group.categoryId}") + group.tasks.map { it.task.id } + listOf("gap-${group.categoryId}") }
+    var previousKeys by remember { mutableStateOf(keys) }
+    var previousRevisions by remember { mutableStateOf(emptyMap<Long, Long>()) }
+    var consumedChange by remember { mutableStateOf(change.sequence) }
+    val revisions = groups.flatMap { it.tasks }.associate { it.task.id to it.occurrenceRevision }
+    SideEffect {
+        val ready = change.sequence != consumedChange && (homeData.revisions[change.taskId] == change.revision)
+        if (keys != previousKeys || revisions != previousRevisions || ready) {
+            val target = keys.indexOf(change.taskId)
+            if (follow && ready && target >= 0 && !listState.isScrollInProgress) {
+                listState.requestScrollToItem(target)
+            } else {
+                val position = stablePosition(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset, keys.size)
+                listState.requestScrollToItem(position.index, position.offset)
+            }
+            previousKeys = keys
+            previousRevisions = revisions
+            if (ready) consumedChange = change.sequence
+        }
+    }
     val hazeState = rememberHazeState()
     val pillBackdrop = rememberLayerBackdrop()
-    val today = LocalDate.now()
+    val headerBackdrop = rememberLayerBackdrop()
+    val today by viewModel.today.collectAsStateWithLifecycle()
+    val includeHidden by viewModel.includeHidden.collectAsStateWithLifecycle()
     var pendingEarlyComplete by remember { mutableStateOf<TaskView?>(null) }
 
     Scaffold(
         topBar = {
-            // Glass app bar: the list scrolls underneath and blurs through it.
-            TopAppBar(
-                title = { Text("Chores", fontWeight = FontWeight.SemiBold) },
-                actions = {
-                    LiquidIconButton(onClick = onOpenSettings, backdrop = pillBackdrop) {
-                        Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                    }
-                    Spacer(Modifier.width(4.dp))
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color.Transparent,
-                    scrolledContainerColor = Color.Transparent,
-                ),
-                modifier = Modifier.glassPanel(hazeState, glassTint),
-            )
+            // Capture only the already-blurred header background, never its controls.
+            Box {
+                Box(Modifier.matchParentSize().layerBackdrop(headerBackdrop).progressiveHeader(hazeState))
+                TopAppBar(
+                    title = { Text("Chores", fontWeight = FontWeight.SemiBold) },
+                    actions = {
+                        LiquidIconButton(onClick = viewModel::toggleHidden, backdrop = headerBackdrop, diameter = 48.dp,
+                            modifier = Modifier.semantics { stateDescription = if (includeHidden) "Hidden chores visible" else "Hidden chores concealed" }) {
+                            Icon(painterResource(if (includeHidden) R.drawable.ic_eye else R.drawable.ic_eye_off),
+                                contentDescription = if (includeHidden) "Hide hidden chores" else "Show hidden chores")
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        LiquidIconButton(onClick = onOpenSettings, backdrop = headerBackdrop, diameter = 48.dp) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
+                        Spacer(Modifier.width(4.dp))
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
+                        scrolledContainerColor = Color.Transparent,
+                    ),
+                    modifier = Modifier.padding(bottom = 24.dp),
+                )
+            }
         },
-        floatingActionButton = {
-            LiquidPillButton(onClick = onAddTask, backdrop = pillBackdrop) {
-                Icon(Icons.Filled.Add, contentDescription = null)
-                Text("New chore", fontWeight = FontWeight.Medium)
+        bottomBar = {
+            Row(Modifier.fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                .imePadding().padding(horizontal = 16.dp, vertical = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.Bottom) {
+                // This allocation exists even while the confirmation is absent/animating.
+                Box(Modifier.weight(1f), contentAlignment = Alignment.BottomStart) {
+                    if (showCompletion) CompletionBar(viewModel.appContainer, pillBackdrop)
+                }
+                LiquidPillButton(onClick = onAddTask, backdrop = pillBackdrop) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                    Text("New", fontWeight = FontWeight.Medium)
+                }
             }
         },
         containerColor = MaterialTheme.colorScheme.background,
     ) { padding ->
         if (groups.isEmpty()) {
-            EmptyState(Modifier.fillMaxSize().padding(padding))
+            EmptyState(Modifier.fillMaxSize().glassSource(hazeState).layerBackdrop(pillBackdrop).padding(padding))
             return@Scaffold
         }
 
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 // Source layer: this is the content the app bar blurs.
@@ -131,7 +190,7 @@ fun HomeScreen(
                 .layerBackdrop(pillBackdrop),
             contentPadding = PaddingValues(
                 top = padding.calculateTopPadding() + 8.dp,
-                bottom = padding.calculateBottomPadding() + 96.dp,
+                bottom = padding.calculateBottomPadding() + 8.dp,
                 start = 16.dp,
                 end = 16.dp,
             ),
@@ -153,7 +212,7 @@ fun HomeScreen(
                             if (task.dueState == DueState.UPCOMING) {
                                 pendingEarlyComplete = task
                             } else {
-                                viewModel.complete(task.task.id)
+                                viewModel.complete(task)
                             }
                         },
                         // Completing a task re-sorts the list; animate the move
@@ -173,7 +232,7 @@ fun HomeScreen(
             task = task,
             today = today,
             onConfirm = {
-                viewModel.complete(task.task.id)
+                viewModel.complete(task)
                 pendingEarlyComplete = null
             },
             onDismiss = { pendingEarlyComplete = null },
@@ -197,6 +256,7 @@ private fun EarlyCompletionDialog(
         recurrence = task.task.recurrence.toDomain(task.task.createdDate),
         createdDate = task.task.createdDate,
         lastCompletion = today,
+        completedOccurrence = task.nextDue,
     )
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -356,10 +416,10 @@ private fun EmptyState(modifier: Modifier = Modifier) {
                 modifier = Modifier.size(64.dp),
             )
             Spacer(Modifier.height(16.dp))
-            Text("No chores yet", style = MaterialTheme.typography.titleLarge)
+            Text("No visible chores", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(4.dp))
             Text(
-                "Tap + to add your first recurring chore.",
+                "Use the eye icon to see upcoming chores, or New to add one.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

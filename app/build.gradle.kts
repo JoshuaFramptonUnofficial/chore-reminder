@@ -13,8 +13,8 @@ android {
         applicationId = "com.chorereminder"
         minSdk = 31
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 9
+        versionName = "1.2"
     }
 
     buildTypes {
@@ -39,6 +39,11 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
+    sourceSets.getByName("test").resources.srcDir("schemas")
 
     packaging {
         resources {
@@ -87,4 +92,6 @@ dependencies {
     implementation(libs.kyant.shapes)
 
     testImplementation(libs.junit)
+    testImplementation(libs.androidx.work.testing)
+    testImplementation(libs.robolectric)
 }

@@ -68,7 +68,7 @@ fun formatEarlyCompletionMessage(
     newNextDue: LocalDate,
 ): String = when (kind) {
     RecurrenceKind.ONE_OFF ->
-        "\"$taskName\" is due ${formatDate(currentDue)}. Marking it done now removes it for good."
+        "\"$taskName\" is due ${formatDate(currentDue)}. You can undo completion from Home."
     else ->
         "\"$taskName\" isn't due until ${formatDate(currentDue)}. Completing it now will set " +
             "the next occurrence to ${formatDate(newNextDue)}."
