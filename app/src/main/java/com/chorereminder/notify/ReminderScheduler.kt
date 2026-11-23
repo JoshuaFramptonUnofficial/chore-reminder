@@ -45,7 +45,7 @@ object ReminderScheduler {
         catchUp: Boolean,
     ) {
         val lastNotifiedOn = ReminderHistory(context).lastNotifiedOn(view.task.id)
-        val delay = ReminderTiming.delayUntilNextReminder(view.nextDue, now, lastNotifiedOn, catchUp)
+        val delay = ReminderTiming.delayUntilNextReminder(view.nextDue, now, lastNotifiedOn, catchUp, view.delayedUntil)
 
         val request = OneTimeWorkRequestBuilder<ReminderWorker>()
             .setInitialDelay(delay.toMillis(), TimeUnit.MILLISECONDS)

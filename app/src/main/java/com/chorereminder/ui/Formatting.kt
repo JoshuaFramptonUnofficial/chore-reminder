@@ -4,7 +4,9 @@ import com.chorereminder.data.RecurrenceSpec
 import com.chorereminder.data.RecurrenceKind
 import com.chorereminder.domain.DueState
 import com.chorereminder.domain.IntervalUnit
+import java.time.Instant
 import java.time.LocalDate
+import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.time.temporal.ChronoUnit
@@ -12,8 +14,19 @@ import java.util.Locale
 
 private val MEDIUM_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d, yyyy")
 private val SHORT_DATE: DateTimeFormatter = DateTimeFormatter.ofPattern("MMM d")
+private val SHORT_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("h:mm a")
 
 fun formatDate(date: LocalDate): String = date.format(MEDIUM_DATE)
+
+/** Human label for a pending delay, e.g. "Delayed until 3:00 PM" / "...tomorrow". */
+fun formatDelayedUntil(until: Instant, today: LocalDate, zone: ZoneId = ZoneId.systemDefault()): String {
+    val zoned = until.atZone(zone)
+    return when (zoned.toLocalDate()) {
+        today -> "Delayed until ${zoned.toLocalTime().format(SHORT_TIME)}"
+        today.plusDays(1) -> "Delayed until tomorrow"
+        else -> "Delayed until ${formatDate(zoned.toLocalDate())}"
+    }
+}
 
 /** Human phrasing for a due date, e.g. "Overdue by 3 days" / "Due today" / "in 5 days". */
 fun formatDueLabel(nextDue: LocalDate, state: DueState, today: LocalDate): String {

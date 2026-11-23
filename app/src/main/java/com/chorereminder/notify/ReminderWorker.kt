@@ -34,7 +34,7 @@ class ReminderWorker(
             val now = ZonedDateTime.now()
             val lastNotifiedOn = container.reminderHistory.lastNotifiedOn(taskId)
             currentCoroutineContext().ensureActive()
-            if (ReminderTiming.shouldNotify(view.nextDue, now, lastNotifiedOn) &&
+            if (ReminderTiming.shouldNotify(view.nextDue, now, lastNotifiedOn, view.delayedUntil) &&
                 Notifications.post(applicationContext, view, container.reminderHistory.generation())
             ) {
                 container.reminderHistory.markNotified(taskId, now.toLocalDate())

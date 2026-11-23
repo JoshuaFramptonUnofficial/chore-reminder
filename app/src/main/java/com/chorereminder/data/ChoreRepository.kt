@@ -29,6 +29,13 @@ data class TaskView(
     val lastCompletedOn: LocalDate?,
     val completionCount: Int,
     val occurrenceRevision: Long = 0L,
+    /**
+     * A pending delay, or null if there isn't one. Only set while [TaskEntity.snoozeRevision]
+     * still matches the task's current revision -- any later complete, skip or edit
+     * invalidates it with no extra write. Whether it's still in the future is left
+     * to the reader (UI compares against the wall clock, scheduling against its own `now`).
+     */
+    val delayedUntil: Instant? = null,
 )
 
 /** A category header plus its tasks, sorted soonest-due first (FR-13). */
@@ -175,6 +182,7 @@ fun TaskWithDetails.toView(today: LocalDate): TaskView {
         lastCompletedOn = lastCompletedOn,
         completionCount = completions.count { it.outcome == CompletionOutcome.DONE },
         occurrenceRevision = task.completionRevision,
+        delayedUntil = task.snoozedUntil?.takeIf { task.snoozeRevision == task.completionRevision },
     )
 }
 

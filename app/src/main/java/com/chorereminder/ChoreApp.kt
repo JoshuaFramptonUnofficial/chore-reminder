@@ -11,9 +11,13 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import java.time.Instant
 import java.time.LocalDate
 import java.time.ZonedDateTime
 import java.time.Duration
+import com.chorereminder.domain.DelayOption
+import com.chorereminder.domain.UndoAction
+import com.chorereminder.domain.resolve
 import androidx.work.ExistingWorkPolicy
 import com.chorereminder.data.BackupManager
 import com.chorereminder.data.ChoreDatabase
@@ -148,6 +152,25 @@ class AppContainer(private val context: Context) {
     }
 
     /**
+     * Snoozes a task's reminder until [option] resolves to, and arms the undo pill
+     * to put back whatever snooze (if any) was pending before this one.
+     */
+    suspend fun delayTask(taskId: Long, expectedRevision: Long, option: DelayOption) = reminderMutex.withLock {
+        val before = repository.getTask(taskId) ?: return@withLock
+        val until = option.resolve(Instant.now())
+        repository.snoozeTask(taskId, expectedRevision, until) ?: return@withLock
+        changed(taskId, expectedRevision + 1)
+        // A delay re-arms today's slot, so today's delivery receipt must not block it.
+        reminderHistory.forget(taskId)
+        Notifications.cancel(context, taskId)
+        repository.getTask(taskId)?.let { ReminderScheduler.schedule(context, it) }
+        undoQueue.add(
+            taskId, expectedRevision + 1, android.os.SystemClock.elapsedRealtime(), taskId,
+            action = UndoAction.Delayed(before.task.snoozedUntil, before.task.snoozeRevision),
+        )
+    }
+
+    /**
      * Reverses whatever the receipt with [id] represents. The receipt is re-taken
      * from the queue inside the mutex, not trusted from the caller's Compose state,
      * so a receipt that expired or was superseded between the tap and this call
@@ -156,12 +179,12 @@ class AppContainer(private val context: Context) {
     suspend fun undo(id: Long) = reminderMutex.withLock {
         val receipt = undoQueue.take(id, android.os.SystemClock.elapsedRealtime()) ?: return@withLock
         val taskId = when (val action = receipt.action) {
-            is com.chorereminder.domain.UndoAction.Completed, is com.chorereminder.domain.UndoAction.Skipped -> {
+            is UndoAction.Completed, is UndoAction.Skipped -> {
                 val undone = repository.undoSpecific(id, receipt.revision) ?: return@withLock
                 changed(undone.taskId, receipt.revision + 1)
                 undone.taskId
             }
-            is com.chorereminder.domain.UndoAction.Delayed -> {
+            is UndoAction.Delayed -> {
                 val restored = repository.restoreSnooze(
                     receipt.taskId, receipt.revision, action.previousSnoozedUntil, action.previousSnoozeRevision,
                 ) ?: return@withLock

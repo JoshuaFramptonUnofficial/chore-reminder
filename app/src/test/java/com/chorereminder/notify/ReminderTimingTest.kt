@@ -97,6 +97,36 @@ class ReminderTimingTest {
     }
 
     @Test
+    fun activeSnooze_blocksNotificationAndTargetsTheSnoozeInstantExactly() {
+        val snoozedUntil = at("15:00").toInstant()
+        assertFalse(ReminderTiming.shouldNotify(today, at("09:00"), null, snoozedUntil))
+        assertEquals(
+            Duration.ofHours(6),
+            ReminderTiming.delayUntilNextReminder(today, at("09:00"), null, snoozedUntil = snoozedUntil),
+        )
+    }
+
+    @Test
+    fun lapsedSnooze_fallsThroughToNormalRulesInstead_ofLoopingForever() {
+        val snoozedUntil = at("15:00").toInstant()
+        // Once `now` has reached the snooze instant, it's as if there were no
+        // snooze at all -- this is what stops the one-shot override from firing
+        // on every re-arm after it has already fired once.
+        assertTrue(ReminderTiming.shouldNotify(today, at("15:00"), null, snoozedUntil))
+        assertEquals(Duration.ZERO, ReminderTiming.delayUntilNextReminder(today, at("15:00"), null, snoozedUntil = snoozedUntil))
+    }
+
+    @Test
+    fun snoozeResetsTodaysDeliveryReceipt_soTheOverrideCanStillFireTheSameDay() {
+        // AppContainer.delayTask forgets today's receipt when arming a snooze, so
+        // by the time the snooze lapses the normal "already notified today" gate
+        // (lastNotifiedOn == today) doesn't block the overridden slot.
+        val snoozedUntil = at("15:00").toInstant()
+        assertTrue(ReminderTiming.shouldNotify(today, at("15:00"), null, snoozedUntil))
+        assertFalse(ReminderTiming.shouldNotify(today, at("15:00"), today, snoozedUntil))
+    }
+
+    @Test
     fun completedRecurringChore_usesItsNewDueDateRatherThanOverdueRepeat() {
         val now = at("15:00")
         val newDue = today.plusDays(14)
