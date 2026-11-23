@@ -67,6 +67,9 @@ object ChoreWidgetPrefs {
     const val DEFAULT_COMPACT_ROWS = false
     const val DEFAULT_OPACITY_PERCENT = 90
     val DEFAULT_FILTER = WidgetFilter.DUE_AND_OVERDUE
+
+    fun filterOf(prefs: androidx.datastore.preferences.core.Preferences): WidgetFilter =
+        prefs[FILTER]?.let { runCatching { WidgetFilter.valueOf(it) }.getOrNull() } ?: DEFAULT_FILTER
 }
 
 private object ChoreWidgetActionKeys {
@@ -99,8 +102,7 @@ class ChoreWidget : GlanceAppWidget() {
 
         provideContent {
             val prefs = currentState<androidx.datastore.preferences.core.Preferences>()
-            val filter = prefs[ChoreWidgetPrefs.FILTER]?.let { runCatching { WidgetFilter.valueOf(it) }.getOrNull() }
-                ?: ChoreWidgetPrefs.DEFAULT_FILTER
+            val filter = ChoreWidgetPrefs.filterOf(prefs)
             val showIcons = prefs[ChoreWidgetPrefs.SHOW_ICONS] ?: ChoreWidgetPrefs.DEFAULT_SHOW_ICONS
             val compact = prefs[ChoreWidgetPrefs.COMPACT_ROWS] ?: ChoreWidgetPrefs.DEFAULT_COMPACT_ROWS
             val opacity = (prefs[ChoreWidgetPrefs.OPACITY_PERCENT] ?: ChoreWidgetPrefs.DEFAULT_OPACITY_PERCENT)

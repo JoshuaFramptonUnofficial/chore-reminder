@@ -79,9 +79,14 @@ class AppContainer(private val context: Context) {
     private val dateChanges = kotlinx.coroutines.channels.Channel<Unit>(kotlinx.coroutines.channels.Channel.CONFLATED)
     fun refreshDate() { _today.value = LocalDate.now(); dateChanges.trySend(Unit) }
 
-    /** Widgets show a due/overdue list derived from `today`, so they need the same nudge. */
-    private fun refreshWidgets() {
-        applicationScope.launch { com.chorereminder.widget.ChoreWidget().updateAll(context) }
+    /**
+     * Widgets show a due/overdue list derived from `today`, so they need the same
+     * nudge. Called from inside each mutation's `reminderMutex.withLock` block (as
+     * a suspend call, not a separate launch), so redraws land in the same order as
+     * the mutations that triggered them instead of racing on their own dispatcher.
+     */
+    private suspend fun refreshWidgets() {
+        com.chorereminder.widget.ChoreWidget().updateAll(context)
     }
 
     init {
