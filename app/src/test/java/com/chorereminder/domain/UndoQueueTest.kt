@@ -50,6 +50,21 @@ class UndoQueueTest {
         assertTrue(queue.receipts.value.isEmpty())
     }
 
+    @Test fun actionDefaultsToCompleted_andIsCarriedThroughToTheReceipt() {
+        val queue = UndoQueue()
+        queue.add(1, 1, 1000)
+        assertEquals(UndoAction.Completed, queue.receipts.value.single().action)
+    }
+
+    @Test fun nonDefaultActionsArePreservedAcrossQueueOperations() {
+        val queue = UndoQueue()
+        val delayed = UndoAction.Delayed(previousSnoozedUntil = null, previousSnoozeRevision = null)
+        queue.add(1, 1, 1000, taskId = 1, action = UndoAction.Skipped)
+        queue.add(2, 2, 2000, taskId = 2, action = delayed)
+        assertEquals(UndoAction.Skipped, queue.take(1, 2100)!!.action)
+        assertEquals(delayed, queue.receipts.value.single().action)
+    }
+
     @Test fun accessibilityTimeoutAppliedOnceFromActivationAndBoundedByPendingAge() {
         val queue = UndoQueue()
         queue.add(1, 1, 1000)

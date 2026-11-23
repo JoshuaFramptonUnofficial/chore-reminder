@@ -3,9 +3,21 @@ package com.chorereminder.domain
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/**
+ * What a receipt reverses. [Completed] and [Skipped] both undo through the same
+ * completion-row mechanism (see `undoSpecific`); [Delayed] undoes by restoring
+ * whatever snooze state preceded it.
+ */
+sealed interface UndoAction {
+    data object Completed : UndoAction
+    data object Skipped : UndoAction
+    data class Delayed(val previousSnoozedUntil: java.time.Instant?, val previousSnoozeRevision: Long?) : UndoAction
+}
+
 data class UndoReceipt(val completionId: Long, val revision: Long, val expiresAt: Long, val taskId: Long,
     val activatedAt: Long? = null, val timeoutAdjusted: Boolean = false,
     val validUntil: Long = expiresAt,
+    val action: UndoAction = UndoAction.Completed,
 )
 
 /** One foreground confirmation at a time; pending actions have a bounded lifetime. */
@@ -13,11 +25,11 @@ class UndoQueue {
     private val pending = MutableStateFlow<List<UndoReceipt>>(emptyList())
     val receipts = pending.asStateFlow()
 
-    @Synchronized fun add(id: Long, revision: Long, now: Long, taskId: Long = id) {
+    @Synchronized fun add(id: Long, revision: Long, now: Long, taskId: Long = id, action: UndoAction = UndoAction.Completed) {
         removeTask(taskId, now)
         refresh(now)
         pending.value = pending.value + UndoReceipt(id, revision, now + if (pending.value.isEmpty()) 8000 else 120000, taskId,
-            activatedAt = now.takeIf { pending.value.isEmpty() }, validUntil = now + 120000)
+            activatedAt = now.takeIf { pending.value.isEmpty() }, validUntil = now + 120000, action = action)
     }
 
     @Synchronized fun refresh(now: Long) {

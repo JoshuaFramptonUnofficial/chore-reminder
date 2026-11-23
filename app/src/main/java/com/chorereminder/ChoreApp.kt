@@ -147,13 +147,31 @@ class AppContainer(private val context: Context) {
         undoQueue.add(completed.id, expectedRevision + 1, android.os.SystemClock.elapsedRealtime(), taskId)
     }
 
-    suspend fun undoCompletion(completionId: Long) = reminderMutex.withLock {
-        val receipt = undoQueue.take(completionId, android.os.SystemClock.elapsedRealtime()) ?: return@withLock
-        val undone = repository.undoSpecific(completionId, receipt.revision) ?: return@withLock
-        changed(undone.taskId, receipt.revision + 1)
-        Notifications.cancel(context, undone.taskId)
+    /**
+     * Reverses whatever the receipt with [id] represents. The receipt is re-taken
+     * from the queue inside the mutex, not trusted from the caller's Compose state,
+     * so a receipt that expired or was superseded between the tap and this call
+     * can never be actioned twice.
+     */
+    suspend fun undo(id: Long) = reminderMutex.withLock {
+        val receipt = undoQueue.take(id, android.os.SystemClock.elapsedRealtime()) ?: return@withLock
+        val taskId = when (val action = receipt.action) {
+            is com.chorereminder.domain.UndoAction.Completed, is com.chorereminder.domain.UndoAction.Skipped -> {
+                val undone = repository.undoSpecific(id, receipt.revision) ?: return@withLock
+                changed(undone.taskId, receipt.revision + 1)
+                undone.taskId
+            }
+            is com.chorereminder.domain.UndoAction.Delayed -> {
+                val restored = repository.restoreSnooze(
+                    receipt.taskId, receipt.revision, action.previousSnoozedUntil, action.previousSnoozeRevision,
+                ) ?: return@withLock
+                changed(restored.id, receipt.revision + 1)
+                restored.id
+            }
+        }
+        Notifications.cancel(context, taskId)
         // Keep today's delivery receipt: undo restores the chore without re-alerting.
-        repository.getTask(undone.taskId)?.let { ReminderScheduler.schedule(context, it) }
+        repository.getTask(taskId)?.let { ReminderScheduler.schedule(context, it) }
     }
 
     /** Parse/replace first; failed imports must preserve both data and reminders. */

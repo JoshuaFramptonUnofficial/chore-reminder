@@ -16,6 +16,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chorereminder.AppContainer
 import com.chorereminder.R
+import com.chorereminder.domain.UndoAction
 import com.chorereminder.ui.theme.liquidPillSurface
 import com.kyant.backdrop.Backdrop
 import kotlinx.coroutines.delay
@@ -39,9 +40,14 @@ fun CompletionBar(container: AppContainer, backdrop: Backdrop, modifier: Modifie
             verticalArrangement = Arrangement.Center,
             itemVerticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Task completed", style = MaterialTheme.typography.bodySmall)
+            val label = when (receipt?.action) {
+                is UndoAction.Skipped -> "Chore skipped"
+                is UndoAction.Delayed -> "Chore delayed"
+                else -> "Task completed"
+            }
+            Text(label, style = MaterialTheme.typography.bodySmall)
             TextButton(contentPadding = PaddingValues(horizontal = 4.dp), onClick = {
-                receipt?.let { container.applicationScope.launch { container.undoCompletion(it.completionId) } }
+                receipt?.let { container.applicationScope.launch { container.undo(it.completionId) } }
             }) {
                 Icon(painterResource(R.drawable.ic_undo), contentDescription = null, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(4.dp))
