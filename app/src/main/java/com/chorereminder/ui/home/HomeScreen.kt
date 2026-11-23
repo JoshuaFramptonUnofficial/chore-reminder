@@ -34,15 +34,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Settings
-import com.chorereminder.ui.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SwipeToDismissBox
-import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -69,18 +68,19 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chorereminder.data.CategoryGroup
 import com.chorereminder.data.TaskView
 import com.chorereminder.domain.DelayOption
 import com.chorereminder.domain.DueState
-import com.chorereminder.domain.nextDueDate
 import com.chorereminder.ui.DelaySheet
+import com.chorereminder.ui.EarlyCompletionDialog
+import com.chorereminder.ui.SkipConfirmDialog
 import com.chorereminder.ui.TaskIconBadge
 import com.chorereminder.ui.formatDelayedUntil
 import com.chorereminder.ui.formatDueLabel
-import com.chorereminder.ui.formatEarlyCompletionMessage
 import com.chorereminder.ui.formatRecurrence
 import com.chorereminder.ui.theme.LiquidIconButton
 import com.chorereminder.ui.theme.LiquidPillButton
@@ -141,6 +141,8 @@ fun HomeScreen(
     val includeHidden by viewModel.includeHidden.collectAsStateWithLifecycle()
     var pendingEarlyComplete by remember { mutableStateOf<TaskView?>(null) }
     var pendingDelay by remember { mutableStateOf<TaskView?>(null) }
+    var pendingSkip by remember { mutableStateOf<TaskView?>(null) }
+    var pendingActionsFor by remember { mutableStateOf<TaskView?>(null) }
 
     Scaffold(
         topBar = {
@@ -226,6 +228,8 @@ fun HomeScreen(
                             }
                         },
                         onDelay = { pendingDelay = task },
+                        onSkip = { pendingSkip = task },
+                        onLongPress = { pendingActionsFor = task },
                         // Completing a task re-sorts the list; animate the move
                         // instead of letting rows jump.
                         modifier = Modifier.animateItem(),
@@ -259,47 +263,51 @@ fun HomeScreen(
             onDismiss = { pendingDelay = null },
         )
     }
+
+    pendingSkip?.let { task ->
+        SkipConfirmDialog(
+            task = task,
+            today = today,
+            onConfirmSkip = {
+                viewModel.skip(task)
+                pendingSkip = null
+            },
+            onDelayInstead = {
+                pendingSkip = null
+                pendingDelay = task
+            },
+            onCancel = { pendingSkip = null },
+        )
+    }
+
+    pendingActionsFor?.let { task ->
+        TaskActionSheet(
+            onDelay = {
+                pendingActionsFor = null
+                pendingDelay = task
+            },
+            onSkip = {
+                pendingActionsFor = null
+                pendingSkip = task
+            },
+            onDismiss = { pendingActionsFor = null },
+        )
+    }
 }
 
-/**
- * Confirms completing a task before it's due. The message is computed from the
- * same [nextDueDate] math the repository will use, so the number shown here is
- * exactly what the task will reschedule to.
- */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun EarlyCompletionDialog(
-    task: TaskView,
-    today: LocalDate,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    val newNextDue = nextDueDate(
-        recurrence = task.task.recurrence.toDomain(task.task.createdDate),
-        createdDate = task.task.createdDate,
-        lastCompletion = today,
-        completedOccurrence = task.nextDue,
-    )
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Complete early?") },
-        text = {
-            Text(
-                formatEarlyCompletionMessage(
-                    taskName = task.task.name,
-                    kind = task.task.recurrence.kind,
-                    currentDue = task.nextDue,
-                    newNextDue = newNextDue,
-                ),
-            )
-        },
-        confirmButton = {
-            TextButton(onClick = onConfirm) { Text("Complete") }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Not yet") }
-        },
-        containerColor = glassCardTint,
-    )
+private fun TaskActionSheet(onDelay: () -> Unit, onSkip: () -> Unit, onDismiss: () -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, containerColor = glassCardTint) {
+        Column(Modifier.padding(horizontal = 8.dp).padding(bottom = 16.dp)) {
+            TextButton(onClick = onDelay, modifier = Modifier.fillMaxWidth()) {
+                Text("Delay…", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+            }
+            TextButton(onClick = onSkip, modifier = Modifier.fillMaxWidth()) {
+                Text("Skip this time…", modifier = Modifier.fillMaxWidth(), textAlign = TextAlign.Start)
+            }
+        }
+    }
 }
 
 @Composable
@@ -336,7 +344,9 @@ private fun TaskView.isCurrentlyDelayed(): Boolean = delayedUntil?.isAfter(Insta
  * A single chore. Tapping opens detail; the trailing button marks complete in
  * place (FR-14). Overdue cards get an error-toned border and label (FR-13); a
  * delayed card is tertiary-toned instead, whatever its underlying due state.
- * Swiping left or long-pressing opens the delay picker.
+ * Swiping right skips, swiping left delays, and long-pressing opens a menu with
+ * both -- three paths to the same two actions, since neither gesture alone is
+ * discoverable enough on its own.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -346,6 +356,8 @@ private fun TaskCard(
     onClick: () -> Unit,
     onComplete: () -> Unit,
     onDelay: () -> Unit,
+    onSkip: () -> Unit,
+    onLongPress: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val isOverdue = task.dueState == DueState.OVERDUE
@@ -366,7 +378,11 @@ private fun TaskCard(
 
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
-            if (value == SwipeToDismissBoxValue.EndToStart) onDelay()
+            when (value) {
+                SwipeToDismissBoxValue.StartToEnd -> onSkip()
+                SwipeToDismissBoxValue.EndToStart -> onDelay()
+                SwipeToDismissBoxValue.Settled -> {}
+            }
             // This is an action trigger, not a real dismiss -- the row always
             // springs back, whether or not the swipe reached the threshold.
             false
@@ -376,8 +392,7 @@ private fun TaskCard(
     SwipeToDismissBox(
         state = dismissState,
         modifier = modifier.fillMaxWidth(),
-        enableDismissFromStartToEnd = false,
-        backgroundContent = { DelaySwipeBackground(shape) },
+        backgroundContent = { TaskSwipeBackground(shape, dismissState.dismissDirection) },
     ) {
         val interactionSource = remember { MutableInteractionSource() }
         val scale by rememberPressScale(interactionSource, pressedScale = 0.97f)
@@ -398,7 +413,7 @@ private fun TaskCard(
                     interactionSource = interactionSource,
                     indication = null,
                     onClick = onClick,
-                    onLongClick = onDelay,
+                    onLongClick = onLongPress,
                 )
                 .padding(horizontal = 14.dp, vertical = 12.dp),
         ) {
@@ -463,20 +478,23 @@ private fun TaskCard(
 }
 
 @Composable
-private fun DelaySwipeBackground(shape: RoundedCornerShape) {
+private fun TaskSwipeBackground(shape: RoundedCornerShape, direction: SwipeToDismissBoxValue) {
+    val skip = direction == SwipeToDismissBoxValue.StartToEnd
+    val containerColor = if (skip) MaterialTheme.colorScheme.errorContainer else MaterialTheme.colorScheme.tertiaryContainer
+    val contentColor = if (skip) MaterialTheme.colorScheme.onErrorContainer else MaterialTheme.colorScheme.onTertiaryContainer
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(shape)
-            .background(MaterialTheme.colorScheme.tertiaryContainer)
+            .background(containerColor)
             .padding(horizontal = 20.dp),
-        contentAlignment = Alignment.CenterEnd,
+        contentAlignment = if (skip) Alignment.CenterStart else Alignment.CenterEnd,
     ) {
         Text(
-            "Delay",
+            if (skip) "Skip" else "Delay",
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            color = contentColor,
         )
     }
 }

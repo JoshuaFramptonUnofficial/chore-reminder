@@ -58,6 +58,16 @@ class CompleteViewModel(
         }
     }
 
+    fun skip(onFinished: () -> Unit) {
+        val current = _state.value
+        if (current !is CompleteUiState.Ready || current.saving) return
+        _state.value = current.copy(saving = true)
+        viewModelScope.launch {
+            container.skipTask(taskId, current.task.occurrenceRevision)
+            onFinished()
+        }
+    }
+
     companion object {
         fun factory(container: AppContainer, taskId: Long) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

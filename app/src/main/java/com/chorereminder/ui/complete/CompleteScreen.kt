@@ -10,7 +10,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
-import com.chorereminder.ui.GlassAlertDialog as AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -31,15 +30,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.chorereminder.domain.DueState
-import com.chorereminder.domain.nextDueDate
 import com.chorereminder.ui.DelaySheet
+import com.chorereminder.ui.EarlyCompletionDialog
+import com.chorereminder.ui.SkipConfirmDialog
 import com.chorereminder.ui.TaskIconBadge
 import com.chorereminder.ui.formatDate
 import com.chorereminder.ui.formatDelayedUntil
 import com.chorereminder.ui.formatDueLabel
-import com.chorereminder.ui.formatEarlyCompletionMessage
 import java.time.Instant
-import com.chorereminder.ui.theme.glassCardTint
 import com.chorereminder.ui.theme.glassPanel
 import com.chorereminder.ui.theme.glassSource
 import com.chorereminder.ui.theme.glassTint
@@ -62,6 +60,10 @@ fun CompleteScreen(
     openDelayImmediately: Boolean = false,
     /** Called once [openDelayImmediately] has been acted on, so it isn't replayed on a later visit. */
     onDelayFlagConsumed: () -> Unit = {},
+    /** True when the notification's Skip... action (not just a tap) opened this screen. */
+    openSkipImmediately: Boolean = false,
+    /** Called once [openSkipImmediately] has been acted on, so it isn't replayed on a later visit. */
+    onSkipFlagConsumed: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val hazeState = rememberHazeState()
@@ -97,10 +99,17 @@ fun CompleteScreen(
                 val view = s.task
                 var confirmEarly by remember(view.task.id) { mutableStateOf(false) }
                 var showDelaySheet by remember(view.task.id) { mutableStateOf(false) }
+                var confirmSkip by remember(view.task.id) { mutableStateOf(false) }
                 LaunchedEffect(openDelayImmediately) {
                     if (openDelayImmediately) {
                         showDelaySheet = true
                         onDelayFlagConsumed()
+                    }
+                }
+                LaunchedEffect(openSkipImmediately) {
+                    if (openSkipImmediately) {
+                        confirmSkip = true
+                        onSkipFlagConsumed()
                     }
                 }
                 ConfirmCard(hazeState) {
@@ -165,6 +174,13 @@ fun CompleteScreen(
                     ) {
                         Text("Delay…")
                     }
+                    TextButton(
+                        onClick = { confirmSkip = true },
+                        enabled = !s.saving,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text("Skip…")
+                    }
                     TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) {
                         Text("Not yet")
                     }
@@ -180,35 +196,30 @@ fun CompleteScreen(
                     }
 
                     if (confirmEarly) {
-                        val newNextDue = nextDueDate(
-                            recurrence = view.task.recurrence.toDomain(view.task.createdDate),
-                            createdDate = view.task.createdDate,
-                            lastCompletion = today,
-                            completedOccurrence = view.nextDue,
+                        EarlyCompletionDialog(
+                            task = view,
+                            today = today,
+                            onConfirm = {
+                                confirmEarly = false
+                                viewModel.confirm(onFinished)
+                            },
+                            onDismiss = { confirmEarly = false },
                         )
-                        AlertDialog(
-                            onDismissRequest = { confirmEarly = false },
-                            title = { Text("Complete early?") },
-                            text = {
-                                Text(
-                                    formatEarlyCompletionMessage(
-                                        taskName = view.task.name,
-                                        kind = view.task.recurrence.kind,
-                                        currentDue = view.nextDue,
-                                        newNextDue = newNextDue,
-                                    ),
-                                )
+                    }
+
+                    if (confirmSkip) {
+                        SkipConfirmDialog(
+                            task = view,
+                            today = today,
+                            onConfirmSkip = {
+                                confirmSkip = false
+                                viewModel.skip(onFinished)
                             },
-                            confirmButton = {
-                                TextButton(onClick = {
-                                    confirmEarly = false
-                                    viewModel.confirm(onFinished)
-                                }) { Text("Complete") }
+                            onDelayInstead = {
+                                confirmSkip = false
+                                showDelaySheet = true
                             },
-                            dismissButton = {
-                                TextButton(onClick = { confirmEarly = false }) { Text("Not yet") }
-                            },
-                            containerColor = glassCardTint,
+                            onCancel = { confirmSkip = false },
                         )
                     }
                 }

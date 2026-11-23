@@ -46,6 +46,10 @@ class HomeViewModel(private val container: AppContainer) : ViewModel() {
         viewModelScope.launch { container.delayTask(task.task.id, task.occurrenceRevision, option) }
     }
 
+    fun skip(task: TaskView) {
+        viewModelScope.launch { container.skipTask(task.task.id, task.occurrenceRevision) }
+    }
+
     companion object {
         fun factory(container: AppContainer) = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
