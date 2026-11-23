@@ -40,7 +40,9 @@ class MigrationTest {
     }
 
     @Test fun oldDatabases_migrateWithoutLosingChoresOrHistory() = runBlocking {
-        for (version in 1..3) {
+        // 4 is the real-world case: every shipped install is on v4 (Release 1.2) or
+        // earlier, so 4->5->6 is the only upgrade path actual users take.
+        for (version in 1..4) {
             val app = RuntimeEnvironment.getApplication()
             val name = "migration-test-$version.db"
             app.deleteDatabase(name)
